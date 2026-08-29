@@ -1,0 +1,25 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Variables d'environnement 
+.env
+*.env
+!*.env.example
+
+# Node / Vue frontend
+node_modules/
+dist/
+.vite/
+
+# Éditeurs / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
