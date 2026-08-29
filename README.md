@@ -28,33 +28,3 @@ Nombre de tables : 12
 
 utilisateurs, roles_permissions, services_communes, ressources_sensibles, journal_acces (chaîné cryptographiquement), profils_comportementaux, scores_anomalie, alertes_securite, investigations, rapports_audit, politiques_conformite, benchmarking_services
 
-Architecture technique
-PostgreSQL pour la persistance transactionnelle (utilisateurs, journal, résultats d'analyse)
-Module de chaînage cryptographique (Node.js ou Python, hash SHA-256 liant chaque entrée du journal à la précédente) pour garantir l'infalsifiabilité — cœur "sécurité" du sujet
-Python (pandas, statsmodels, scipy) pour la construction des profils comportementaux et la détection statistique d'anomalies — cœur "analyse de données" du sujet, qui correspond directement à ton point fort
-Streamlit ou React pour le tableau de bord : Streamlit permet de concentrer ton temps sur l'analyse plutôt que sur le développement d'interface, ce qui est cohérent avec un profil orienté data
-Architecture volontairement sobre côté infrastructure (pas de microservices, pas de streaming) pour que la complexité reste concentrée là où tu es le plus à l'aise : la rigueur analytique
-Partie innovante
-
-Le sujet combine une brique d'ingénierie de sécurité (intégrité inviolable du journal, un vrai problème d'ingénierie logicielle) avec une brique d'analyse comportementale statistique (établir une baseline, détecter un écart significatif, éviter les faux positifs) et une brique de data storytelling comparatif (pourquoi telle commune a un profil différent, avec quelle robustesse statistique). C'est cette dimension analytique poussée — pas juste "on détecte une anomalie" mais "on explique pourquoi, avec quelle méthode, et quelles réserves" — qui distingue ce sujet élargi d'un simple système de logs sécurisés.
-
-Méthodologie
-
-UML et modélisation de menaces pour la partie sécurité ; démarche statistique rigoureuse (définition de la baseline, choix du seuil de détection, contrôle du taux de faux positifs) pour la partie analytique ; Scrum pour le développement applicatif.
-
-Évaluation
-Sécurité : résistance du journal à des tentatives de falsification simulées
-Détection d'anomalies : précision/rappel sur des comportements anormaux injectés artificiellement dans un jeu de données simulé, taux de faux positifs
-Benchmarking : cohérence et robustesse des comparaisons entre services (stabilité des résultats sur des sous-échantillons différents)
-Utilité perçue : clarté des explications narratives testée auprès d'un utilisateur simulant un auditeur ou un responsable hiérarchique
-Niveau de difficulté
-
-Très difficile — la difficulté est répartie entre une brique de sécurité logicielle (chaînage cryptographique) et une brique de rigueur statistique (baseline, seuils, faux positifs), ce qui donne un mémoire riche sur deux plans complémentaires.
-
-Faisabilité solo (stage)
-
-Bonne à très bonne : chaque brique prise isolément est bien maîtrisable (le chaînage cryptographique est une implémentation classique bien documentée ; l'analyse statistique s'appuie sur des méthodes éprouvées). Le risque principal est de vouloir aller trop loin sur le machine learning avancé pour la détection — recommandé de rester sur des méthodes statistiques simples et bien justifiées plutôt que sur des modèles complexes moins interprétables.
-
-Intérêt pour un jury de Master 2
-
-9/10 — le sujet initial (sécurité/intégrité) était déjà solide ; l'élargissement vers l'analyse comportementale et le benchmarking ajoute une vraie profondeur data science, ce qui permet de démontrer un profil complet (ingénierie + analyse), tout en restant clairement délimité et réalisable en stage.
