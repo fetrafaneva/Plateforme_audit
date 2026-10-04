@@ -1,9 +1,12 @@
 """Génère un historique d'accès simulé pour un utilisateur, sur plusieurs
-jours, avec une journée anormale injectée (pic de volume) — sert de jeu
-de test pour la construction du profil comportemental et la détection
-d'anomalies (chapitre 9.3 du mémoire).
+jours, avec plusieurs journées anormales injectées à des intensités
+différentes — des cas évidents (x8) aux cas limites (x1.5) — pour évaluer
+la sensibilité réelle de la détection (chapitre 9.3-9.4 du mémoire).
 
 Usage : python generate_synthetic_data.py
+IMPORTANT : si tu relances ce script, vide d'abord les tables
+journal_acces / profils_comportementaux / scores_anomalie (TRUNCATE) pour
+éviter de mélanger plusieurs générations sur les mêmes dates.
 """
 
 import random
@@ -18,10 +21,21 @@ from app.models.audit import JournalAcces
 from app.models.identity import Utilisateur
 from app.models.ressources import RessourceSensible
 
-ID_UTILISATEUR_CIBLE = 1 # adapte à l'id de ton utilisateur de test
+ID_UTILISATEUR_CIBLE = 1  # adapte à l'id de ton utilisateur de test
 NB_JOURS_HISTORIQUE = 20
 VOLUME_MOYEN_NORMAL = 5  # accès/jour en moyenne, comportement normal
-JOUR_ANOMALIE = 5  # J-5 : journée avec un pic de volume anormal
+
+# Jours anormaux injectés, avec un multiplicateur de volume différent
+# chacun — des cas limites (x1.5, x2) aux cas évidents (x8), pour tester
+# la sensibilité réelle de la détection plutôt qu'un seul gros pic facile.
+# Doit être répété à l'identique dans evaluer_detection.py.
+JOURS_ANOMALIE = {
+    19: 1.5,  # J-19 : anomalie très légère, cas limite
+    11: 2,    # J-11 : anomalie légère
+    15: 3,    # J-15 : sur-volume modéré
+    8: 5,     # J-8  : sur-volume net
+    3: 8,     # J-3  : pic fort, cas évident
+}
 
 
 def generer():
@@ -46,8 +60,8 @@ def generer():
         for jour_offset in range(NB_JOURS_HISTORIQUE, 0, -1):
             jour = aujourdhui - timedelta(days=jour_offset)
 
-            if jour_offset == JOUR_ANOMALIE:
-                volume_jour = VOLUME_MOYEN_NORMAL * 6  # pic anormal volontaire
+            if jour_offset in JOURS_ANOMALIE:
+                volume_jour = max(0, round(VOLUME_MOYEN_NORMAL * JOURS_ANOMALIE[jour_offset]))
             else:
                 volume_jour = max(0, int(np.random.poisson(VOLUME_MOYEN_NORMAL)))
 
@@ -91,8 +105,10 @@ def generer():
 
         db.commit()
         print(f"{nb_inserees} entrées générées sur {NB_JOURS_HISTORIQUE} jours.")
-        print(f"Jour J-{JOUR_ANOMALIE} : pic de volume anormal injecté "
-              f"({VOLUME_MOYEN_NORMAL * 6} accès contre ~{VOLUME_MOYEN_NORMAL} en moyenne).")
+        print("Jours anormaux injectés :")
+        for offset, mult in sorted(JOURS_ANOMALIE.items(), reverse=True):
+            volume = round(VOLUME_MOYEN_NORMAL * mult)
+            print(f"  J-{offset} : x{mult} ({volume} accès contre ~{VOLUME_MOYEN_NORMAL} en moyenne)")
     finally:
         db.close()
 

@@ -1,12 +1,15 @@
 """Construction des profils comportementaux et détection d'anomalies.
 
 Méthode retenue (cf. chapitre 9 du mémoire) : la baseline d'un agent est la
-moyenne et l'écart-type de son volume d'accès journalier, calculés sur son
-historique. Un jour est jugé anormal si son volume s'écarte de plus de
-`seuil_z` écarts-types de la moyenne (méthode de contrôle statistique par
-z-score, équivalente à une carte de contrôle). Volontairement simple et
-interprétable plutôt qu'un modèle de machine learning — conforme à la
-recommandation du document de cadrage d'éviter la complexité inutile.
+moyenne et l'écart-type de son volume d'accès journalier. Pour éviter
+qu'un jour anormal ne contamine sa propre détection (limite identifiée
+lors des premiers tests — la baseline incluait le pic dans son propre
+calcul), la baseline est calculée par exclusion itérative des jours
+aberrants : on calcule moyenne/écart-type, on retire les jours à plus de
+`seuil_exclusion` écarts-types, on recalcule sur le reste, et on répète
+jusqu'à stabilisation. Volontairement simple et interprétable plutôt
+qu'un modèle de machine learning — conforme à la recommandation du
+document de cadrage d'éviter la complexité inutile.
 """
 
 import pandas as pd
@@ -16,6 +19,7 @@ from app.models.analyse import ProfilComportemental, ScoreAnomalie
 from app.models.audit import JournalAcces
 
 SEUIL_Z_PAR_DEFAUT = 3.0
+SEUIL_EXCLUSION_BASELINE = 2.5
 
 
 def _historique_utilisateur(db: Session, id_utilisateur: int) -> pd.DataFrame:
@@ -33,6 +37,29 @@ def _historique_utilisateur(db: Session, id_utilisateur: int) -> pd.DataFrame:
     return pd.DataFrame(data)
 
 
+def calculer_baseline_robuste(
+    volume_par_jour: pd.Series,
+    seuil_exclusion: float = SEUIL_EXCLUSION_BASELINE,
+    max_iterations: int = 5,
+) -> tuple[float, float]:
+    """Moyenne et écart-type du volume journalier, en excluant itérativement
+    les jours aberrants avant de recalculer. Retourne (moyenne, ecart_type).
+    """
+    jours_retenus = volume_par_jour.copy()
+    for _ in range(max_iterations):
+        moyenne = jours_retenus.mean()
+        ecart_type = jours_retenus.std(ddof=0) or 1.0
+        z = (jours_retenus - moyenne) / ecart_type
+        jours_normaux = jours_retenus[z.abs() <= seuil_exclusion]
+        if len(jours_normaux) == len(jours_retenus) or len(jours_normaux) == 0:
+            break
+        jours_retenus = jours_normaux
+
+    moyenne_finale = float(jours_retenus.mean())
+    ecart_type_final = float(jours_retenus.std(ddof=0) or 1.0)
+    return moyenne_finale, ecart_type_final
+
+
 def construire_profil(
     db: Session, id_utilisateur: int, periode_reference: str
 ) -> ProfilComportemental:
@@ -43,7 +70,7 @@ def construire_profil(
         )
 
     volume_par_jour = df.groupby("date").size()
-    volume_moyen = float(volume_par_jour.mean())
+    volume_moyen, _ = calculer_baseline_robuste(volume_par_jour)
 
     heure_min = int(df["heure"].quantile(0.05))
     heure_max = int(df["heure"].quantile(0.95))
@@ -86,7 +113,9 @@ def detecter_anomalie(
 
     df = _historique_utilisateur(db, entree.id_utilisateur)
     volume_par_jour = df.groupby("date").size()
-    ecart_type = float(volume_par_jour.std(ddof=0)) or 1.0  # évite une division par zéro
+    # Écart-type recalculé par la même méthode robuste que la baseline,
+    # pour que la détection ne soit pas polluée par les jours aberrants.
+    _, ecart_type = calculer_baseline_robuste(volume_par_jour)
 
     jour_entree = entree.horodatage.date()
     volume_du_jour = int(volume_par_jour.get(jour_entree, 0))
@@ -97,7 +126,7 @@ def detecter_anomalie(
         id_entree_journal=id_entree_journal,
         id_profil_reference=profil.id_profil,
         z_score=z_score,
-        methode_utilisee="z-score volume journalier",
+        methode_utilisee="z-score volume journalier (baseline robuste)",
     )
     db.add(score)
     db.commit()
