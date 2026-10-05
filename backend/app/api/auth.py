@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user
 from app.core.security import create_access_token, hash_password, verify_password
 from app.db.base import get_db
-from app.models.identity import Utilisateur
+from app.models.identity import Role, ServiceCommune, Utilisateur  
 from app.schemas.auth import Token, UserCreate, UserLogin, UserOut
 
 router = APIRouter(prefix="/auth", tags=["authentification"])
@@ -15,6 +15,12 @@ def register(payload: UserCreate, db: Session = Depends(get_db)):
     existing = db.query(Utilisateur).filter(Utilisateur.email == payload.email).first()
     if existing:
         raise HTTPException(status_code=400, detail="Cet email est déjà utilisé")
+
+    if not db.query(Role).filter(Role.id_role == payload.id_role).first():
+        raise HTTPException(status_code=400, detail="Rôle introuvable")
+
+    if not db.query(ServiceCommune).filter(ServiceCommune.id_service == payload.id_service).first():
+        raise HTTPException(status_code=400, detail="Service/commune introuvable")
 
     user = Utilisateur(
         nom=payload.nom,

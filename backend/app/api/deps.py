@@ -31,3 +31,13 @@ def get_current_user(
     if user is None:
         raise credentials_exception
     return user
+
+def require_role(*roles_autorises: str):
+    def verificateur(current_user: Utilisateur = Depends(get_current_user)) -> Utilisateur:
+        if current_user.role.nom_role not in roles_autorises:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Accès refusé : rôle insuffisant",
+            )
+        return current_user
+    return verificateur

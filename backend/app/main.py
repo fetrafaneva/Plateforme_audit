@@ -1,5 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from sqlalchemy.exc import IntegrityError
 
 from app.api.analyse import router as analyse_router
 from app.api.auth import router as auth_router
@@ -10,11 +12,24 @@ from app.api.missions import (
     equipes_router,
     participants_router,
     districts_router,
+    missions_districts_router,
+    types_activite_router,
+    phases_router,
+    journees_router,
+    livrables_router,
+    indicateurs_router,
 )
 from app.core.config import settings
 
 app = FastAPI(title="Plateforme d'audit comportemental")
 
+@app.exception_handler(IntegrityError)
+def handle_integrity_error(request, exc: IntegrityError):
+    return JSONResponse(
+        status_code=400,
+        content={"detail": "Donnée invalide : référence inexistante ou valeur en double."},
+    )
+    
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.frontend_origin],
@@ -31,6 +46,12 @@ app.include_router(axes_router)
 app.include_router(equipes_router)
 app.include_router(participants_router)
 app.include_router(districts_router)
+app.include_router(missions_districts_router)
+app.include_router(types_activite_router)
+app.include_router(phases_router)
+app.include_router(journees_router)
+app.include_router(livrables_router)
+app.include_router(indicateurs_router)
 
 
 @app.get("/health")

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, date as date_type
 from pydantic import BaseModel
 
 
@@ -63,6 +63,92 @@ class ParticipantCreate(BaseModel):
 
 
 class ParticipantOut(ParticipantCreate):
+    id: int
+
+    class Config:
+        from_attributes = True
+
+
+class MissionDistrictCreate(BaseModel):
+    axe_id: int
+    district_id: int
+    ordre_visite: int | None = None
+
+
+class MissionDistrictOut(MissionDistrictCreate):
+    id: int
+    statut: str
+
+    class Config:
+        from_attributes = True
+
+
+class TypeActiviteCreate(BaseModel):
+    libelle: str
+
+
+class TypeActiviteOut(TypeActiviteCreate):
+    id: int
+
+    class Config:
+        from_attributes = True
+
+
+class PhaseCreate(BaseModel):
+    mission_district_id: int
+    type_activite_id: int
+    numero_ordre: int | None = None
+    duree_prevue: str | None = None
+    livrable_attendu: str | None = None
+
+
+class PhaseOut(PhaseCreate):
+    id: int
+    statut: str
+
+    class Config:
+        from_attributes = True
+
+
+class JourneeCreate(BaseModel):
+    mission_district_id: int
+    numero_jour: int | None = None
+    date: date_type | None = None
+    lieu: str | None = None
+
+
+class JourneeOut(JourneeCreate):
+    id: int
+    statut: str
+
+    class Config:
+        from_attributes = True
+
+
+class LivrableCreate(BaseModel):
+    phase_id: int
+    type_livrable: str | None = None
+    date_production: datetime | None = None
+    signe: bool = False
+    fichier: str | None = None
+
+
+class LivrableOut(LivrableCreate):
+    id: int
+
+    class Config:
+        from_attributes = True
+
+
+class IndicateurPerformanceCreate(BaseModel):
+    mission_id: int
+    resultat_attendu: str | None = None
+    indicateur_mesure: str | None = None
+    cible: str | None = None
+    valeur_realisee: str | None = None
+
+
+class IndicateurPerformanceOut(IndicateurPerformanceCreate):
     id: int
 
     class Config:
