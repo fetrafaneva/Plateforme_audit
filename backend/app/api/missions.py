@@ -1,5 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from app.models.identity import Utilisateur  # à ajouter aux imports en haut du fichier
+
 
 from app.api.deps import get_db, get_current_user, require_role
 from app.models.missions import (
@@ -97,6 +99,10 @@ def lister_equipes(axe_id: int | None = None, db: Session = Depends(get_db), cur
 def creer_participant(payload: ParticipantCreate, db: Session = Depends(get_db)):
     if not db.query(Equipe).filter(Equipe.id == payload.equipe_id).first():
         raise HTTPException(status_code=404, detail="Équipe introuvable")
+    if payload.id_utilisateur is not None and not db.query(Utilisateur).filter(
+        Utilisateur.id_utilisateur == payload.id_utilisateur
+    ).first():
+        raise HTTPException(status_code=404, detail="Utilisateur introuvable")
     participant = Participant(**payload.model_dump())
     db.add(participant)
     db.commit()

@@ -41,6 +41,7 @@ class Utilisateur(Base):
     matricule: Mapped[str] = mapped_column(String(30), unique=True)
     mot_de_passe_hash: Mapped[str] = mapped_column(String(255))
     id_service: Mapped[int] = mapped_column(ForeignKey("services_communes.id_service"))
+    participations: Mapped[list["Participant"]] = relationship(back_populates="utilisateur")
     id_role: Mapped[int] = mapped_column(ForeignKey("roles_permissions.id_role"))
     statut: Mapped[str] = mapped_column(String(20), default="actif")
     date_creation: Mapped[datetime] = mapped_column(

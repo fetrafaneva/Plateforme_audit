@@ -60,6 +60,7 @@ class ParticipantCreate(BaseModel):
     equipe_id: int
     nom: str
     fonction: str | None = None
+    id_utilisateur: int | None = None
 
 
 class ParticipantOut(ParticipantCreate):
@@ -67,7 +68,6 @@ class ParticipantOut(ParticipantCreate):
 
     class Config:
         from_attributes = True
-
 
 class MissionDistrictCreate(BaseModel):
     axe_id: int

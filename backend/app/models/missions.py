@@ -67,9 +67,10 @@ class Participant(Base):
     equipe_id = Column(Integer, ForeignKey("equipes.id"), nullable=False)
     nom = Column(String, nullable=False)
     fonction = Column(String)
+    id_utilisateur = Column(Integer, ForeignKey("utilisateurs.id_utilisateur"), nullable=True)
 
     equipe = relationship("Equipe", back_populates="participants")
-
+    utilisateur = relationship("Utilisateur", back_populates="participations")
 
 class TypeActivite(Base):
     __tablename__ = "types_activite"
