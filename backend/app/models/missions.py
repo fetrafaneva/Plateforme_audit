@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, Date, Boolean, ForeignKey
+from sqlalchemy import Column, Integer, String, DateTime, Date, Boolean, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import relationship
 from app.db.base import Base
 
@@ -63,6 +63,10 @@ class Equipe(Base):
 
 class Participant(Base):
     __tablename__ = "participants"
+    __table_args__ = (
+        UniqueConstraint("equipe_id", "id_utilisateur", name="uq_participants_equipe_utilisateur"),
+    )
+
     id = Column(Integer, primary_key=True)
     equipe_id = Column(Integer, ForeignKey("equipes.id"), nullable=False)
     nom = Column(String, nullable=False)
@@ -71,6 +75,7 @@ class Participant(Base):
 
     equipe = relationship("Equipe", back_populates="participants")
     utilisateur = relationship("Utilisateur", back_populates="participations")
+
 
 class TypeActivite(Base):
     __tablename__ = "types_activite"
