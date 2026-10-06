@@ -5,7 +5,7 @@ from app.api.deps import get_current_user
 from app.core.security import create_access_token, hash_password, verify_password
 from app.db.base import get_db
 from app.models.identity import Role, ServiceCommune, Utilisateur  
-from app.schemas.auth import Token, UserCreate, UserLogin, UserOut
+from app.schemas.auth import Token, UserCreate, UserLogin, UserOut, UserMeOut
 
 router = APIRouter(prefix="/auth", tags=["authentification"])
 
@@ -50,6 +50,9 @@ def login(payload: UserLogin, db: Session = Depends(get_db)):
     return Token(access_token=access_token)
 
 
-@router.get("/me", response_model=UserOut)
+@router.get("/me", response_model=UserMeOut)
 def read_current_user(current_user: Utilisateur = Depends(get_current_user)):
-    return current_user
+    return UserMeOut(
+        **UserOut.model_validate(current_user).model_dump(),
+        role=current_user.role.nom_role,
+    )

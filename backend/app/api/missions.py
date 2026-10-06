@@ -157,6 +157,13 @@ def lister_missions_districts(axe_id: int | None = None, db: Session = Depends(g
     return query.all()
 
 
+@router.get("/{mission_id}", response_model=MissionOut)
+def obtenir_mission(mission_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    mission = db.query(Mission).filter(Mission.id == mission_id).first()
+    if not mission:
+        raise HTTPException(status_code=404, detail="Mission introuvable")
+    return mission
+
 # --- Types d'activité (référentiel, administrateur seul) ---
 
 @types_activite_router.post("/", response_model=TypeActiviteOut, dependencies=[Depends(require_role("administrateur"))])
