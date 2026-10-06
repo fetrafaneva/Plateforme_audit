@@ -39,3 +39,25 @@ export function listerMissionsDistricts(axeId) {
 export function listerDistricts() {
   return api.get("/districts/").then((res) => res.data);
 }
+
+export function modifierMission(id, payload) {
+  return api.patch(`/missions/${id}`, payload).then((res) => res.data);
+}
+
+export function modifierMissionDistrict(id, payload) {
+  return api
+    .patch(`/missions-districts/${id}`, payload)
+    .then((res) => res.data);
+}
+
+export function supprimerParticipant(id) {
+  return api.delete(`/participants/${id}`);
+}
+
+export function supprimerEquipe(id) {
+  return api.delete(`/equipes/${id}`);
+}
+
+export function supprimerAxe(id) {
+  return api.delete(`/axes/${id}`);
+}

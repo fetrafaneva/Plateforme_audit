@@ -1,5 +1,6 @@
 from datetime import datetime, date as date_type
 from pydantic import BaseModel
+from typing import Literal
 
 
 class MissionCreate(BaseModel):
@@ -153,3 +154,40 @@ class IndicateurPerformanceOut(IndicateurPerformanceCreate):
 
     class Config:
         from_attributes = True
+
+
+StatutMission = Literal["planifiee", "en_cours", "terminee", "annulee"]
+StatutMissionDistrict = Literal["a_planifier", "planifie", "en_cours", "termine"]
+StatutPhase = Literal["a_faire", "en_cours", "terminee"]
+StatutJournee = Literal["prevue", "realisee", "annulee"]
+
+
+class MissionUpdate(BaseModel):
+    titre: str | None = None
+    type_mission: str | None = None
+    date_debut: datetime | None = None
+    date_fin_prevue: datetime | None = None
+    statut: StatutMission | None = None
+
+
+class MissionDistrictUpdate(BaseModel):
+    ordre_visite: int | None = None
+    statut: StatutMissionDistrict | None = None
+
+
+class PhaseUpdate(BaseModel):
+    statut: StatutPhase
+
+
+class JourneeUpdate(BaseModel):
+    statut: StatutJournee
+
+
+class LivrableUpdate(BaseModel):
+    signe: bool | None = None
+    fichier: str | None = None
+
+
+class IndicateurPerformanceUpdate(BaseModel):
+    cible: str | None = None
+    valeur_realisee: str | None = None

@@ -9,18 +9,19 @@ from app.models.missions import (
     TypeActivite, Phase, Journee, Livrable, IndicateurPerformance,
 )
 from app.schemas.missions import (
-    MissionCreate, MissionOut,
+    MissionCreate, MissionOut, MissionUpdate,
     AxeCreate, AxeOut,
     EquipeCreate, EquipeOut,
     ParticipantCreate, ParticipantOut,
     DistrictCreate, DistrictOut,
-    MissionDistrictCreate, MissionDistrictOut,
+    MissionDistrictCreate, MissionDistrictOut, MissionDistrictUpdate,
     TypeActiviteCreate, TypeActiviteOut,
-    PhaseCreate, PhaseOut,
-    JourneeCreate, JourneeOut,
-    LivrableCreate, LivrableOut,
-    IndicateurPerformanceCreate, IndicateurPerformanceOut,
+    PhaseCreate, PhaseOut, PhaseUpdate,
+    JourneeCreate, JourneeOut, JourneeUpdate,
+    LivrableCreate, LivrableOut, LivrableUpdate,
+    IndicateurPerformanceCreate, IndicateurPerformanceOut, IndicateurPerformanceUpdate,
 )
+
 
 router = APIRouter(prefix="/missions", tags=["missions"])
 axes_router = APIRouter(prefix="/axes", tags=["axes"])
@@ -99,10 +100,16 @@ def lister_equipes(axe_id: int | None = None, db: Session = Depends(get_db), cur
 def creer_participant(payload: ParticipantCreate, db: Session = Depends(get_db)):
     if not db.query(Equipe).filter(Equipe.id == payload.equipe_id).first():
         raise HTTPException(status_code=404, detail="Équipe introuvable")
-    if payload.id_utilisateur is not None and not db.query(Utilisateur).filter(
-        Utilisateur.id_utilisateur == payload.id_utilisateur
-    ).first():
-        raise HTTPException(status_code=404, detail="Utilisateur introuvable")
+    if payload.id_utilisateur is not None:
+        if not db.query(Utilisateur).filter(
+            Utilisateur.id_utilisateur == payload.id_utilisateur
+        ).first():
+            raise HTTPException(status_code=404, detail="Utilisateur introuvable")
+        if db.query(Participant).filter(
+            Participant.equipe_id == payload.equipe_id,
+            Participant.id_utilisateur == payload.id_utilisateur,
+        ).first():
+            raise HTTPException(status_code=400, detail="Cet utilisateur est déjà dans cette équipe")
     participant = Participant(**payload.model_dump())
     db.add(participant)
     db.commit()
@@ -264,3 +271,116 @@ def lister_indicateurs(mission_id: int | None = None, db: Session = Depends(get_
     if mission_id is not None:
         query = query.filter(IndicateurPerformance.mission_id == mission_id)
     return query.all()
+
+
+# =====================================================================
+# Modification (PATCH) et suppression (DELETE)
+# =====================================================================
+
+def _obtenir_ou_404(db: Session, modele, id_: int, message: str):
+    objet = db.get(modele, id_)
+    if objet is None:
+        raise HTTPException(status_code=404, detail=message)
+    return objet
+
+
+def _appliquer(db: Session, objet, payload):
+    for champ, valeur in payload.model_dump(exclude_none=True).items():
+        setattr(objet, champ, valeur)
+    db.commit()
+    db.refresh(objet)
+    return objet
+
+
+# --- PATCH ---
+
+@router.patch("/{mission_id}", response_model=MissionOut,
+              dependencies=[Depends(require_role("chef_mission", "administrateur"))])
+def modifier_mission(mission_id: int, payload: MissionUpdate, db: Session = Depends(get_db)):
+    mission = _obtenir_ou_404(db, Mission, mission_id, "Mission introuvable")
+    return _appliquer(db, mission, payload)
+
+
+@missions_districts_router.patch("/{md_id}", response_model=MissionDistrictOut,
+                                 dependencies=[Depends(require_role("chef_mission", "administrateur"))])
+def modifier_mission_district(md_id: int, payload: MissionDistrictUpdate, db: Session = Depends(get_db)):
+    md = _obtenir_ou_404(db, MissionDistrict, md_id, "MissionDistrict introuvable")
+    return _appliquer(db, md, payload)
+
+
+@phases_router.patch("/{phase_id}", response_model=PhaseOut,
+                     dependencies=[Depends(require_role("chef_mission", "administrateur"))])
+def modifier_phase(phase_id: int, payload: PhaseUpdate, db: Session = Depends(get_db)):
+    phase = _obtenir_ou_404(db, Phase, phase_id, "Phase introuvable")
+    return _appliquer(db, phase, payload)
+
+
+@journees_router.patch("/{journee_id}", response_model=JourneeOut,
+                       dependencies=[Depends(require_role("technicien", "chef_mission", "administrateur"))])
+def modifier_journee(journee_id: int, payload: JourneeUpdate, db: Session = Depends(get_db)):
+    journee = _obtenir_ou_404(db, Journee, journee_id, "Journée introuvable")
+    return _appliquer(db, journee, payload)
+
+
+@livrables_router.patch("/{livrable_id}", response_model=LivrableOut,
+                        dependencies=[Depends(require_role("chef_mission", "administrateur"))])
+def modifier_livrable(livrable_id: int, payload: LivrableUpdate, db: Session = Depends(get_db)):
+    livrable = _obtenir_ou_404(db, Livrable, livrable_id, "Livrable introuvable")
+    return _appliquer(db, livrable, payload)
+
+
+@indicateurs_router.patch("/{indicateur_id}", response_model=IndicateurPerformanceOut,
+                          dependencies=[Depends(require_role("chef_mission", "administrateur"))])
+def modifier_indicateur(indicateur_id: int, payload: IndicateurPerformanceUpdate, db: Session = Depends(get_db)):
+    indicateur = _obtenir_ou_404(db, IndicateurPerformance, indicateur_id, "Indicateur introuvable")
+    return _appliquer(db, indicateur, payload)
+
+
+# --- DELETE (400 clair si l'objet a encore des enfants) ---
+
+@participants_router.delete("/{participant_id}", status_code=204,
+                            dependencies=[Depends(require_role("chef_mission", "administrateur"))])
+def supprimer_participant(participant_id: int, db: Session = Depends(get_db)):
+    participant = _obtenir_ou_404(db, Participant, participant_id, "Participant introuvable")
+    db.delete(participant)
+    db.commit()
+
+
+@equipes_router.delete("/{equipe_id}", status_code=204,
+                       dependencies=[Depends(require_role("chef_mission", "administrateur"))])
+def supprimer_equipe(equipe_id: int, db: Session = Depends(get_db)):
+    equipe = _obtenir_ou_404(db, Equipe, equipe_id, "Équipe introuvable")
+    if equipe.participants:
+        raise HTTPException(status_code=400, detail="Impossible : cette équipe a encore des participants")
+    db.delete(equipe)
+    db.commit()
+
+
+@missions_districts_router.delete("/{md_id}", status_code=204,
+                                  dependencies=[Depends(require_role("chef_mission", "administrateur"))])
+def supprimer_mission_district(md_id: int, db: Session = Depends(get_db)):
+    md = _obtenir_ou_404(db, MissionDistrict, md_id, "MissionDistrict introuvable")
+    if md.phases or md.journees:
+        raise HTTPException(status_code=400, detail="Impossible : ce district a encore des phases ou des journées")
+    db.delete(md)
+    db.commit()
+
+
+@axes_router.delete("/{axe_id}", status_code=204,
+                    dependencies=[Depends(require_role("chef_mission", "administrateur"))])
+def supprimer_axe(axe_id: int, db: Session = Depends(get_db)):
+    axe = _obtenir_ou_404(db, Axe, axe_id, "Axe introuvable")
+    if axe.equipes or axe.districts:
+        raise HTTPException(status_code=400, detail="Impossible : cet axe a encore des équipes ou des districts")
+    db.delete(axe)
+    db.commit()
+
+
+@router.delete("/{mission_id}", status_code=204,
+               dependencies=[Depends(require_role("administrateur"))])
+def supprimer_mission(mission_id: int, db: Session = Depends(get_db)):
+    mission = _obtenir_ou_404(db, Mission, mission_id, "Mission introuvable")
+    if mission.axes or mission.indicateurs:
+        raise HTTPException(status_code=400, detail="Impossible : cette mission a encore des axes ou des indicateurs")
+    db.delete(mission)
+    db.commit()
