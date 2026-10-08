@@ -9,7 +9,12 @@ import MissionDetailView from "../views/MissionDetailView.vue";
 const routes = [
   { path: "/", redirect: "/dashboard" },
   { path: "/login", name: "login", component: LoginView },
-  { path: "/register", name: "register", component: RegisterView },
+  {
+    path: "/register",
+    name: "register",
+    component: RegisterView,
+    meta: { requiresAuth: true },
+  },
   {
     path: "/dashboard",
     name: "dashboard",

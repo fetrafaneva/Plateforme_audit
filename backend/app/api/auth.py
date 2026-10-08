@@ -1,17 +1,23 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, require_role
 from app.core.security import create_access_token, hash_password, verify_password
 from app.db.base import get_db
-from app.models.identity import Role, ServiceCommune, Utilisateur  
+from app.models.identity import Role, ServiceCommune, Utilisateur
 from app.schemas.auth import Token, UserCreate, UserLogin, UserOut, UserMeOut
 
 router = APIRouter(prefix="/auth", tags=["authentification"])
 
 
-@router.post("/register", response_model=UserOut, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/register",
+    response_model=UserOut,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_role("administrateur"))],
+)
 def register(payload: UserCreate, db: Session = Depends(get_db)):
+    ...
     existing = db.query(Utilisateur).filter(Utilisateur.email == payload.email).first()
     if existing:
         raise HTTPException(status_code=400, detail="Cet email est déjà utilisé")

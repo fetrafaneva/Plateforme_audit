@@ -1,63 +1,75 @@
 import api from "./api";
 
-export function listerMissions() {
-  return api.get("/missions/").then((res) => res.data);
-}
+const data = (res) => res.data;
 
-export function creerMission(payload) {
-  return api.post("/missions/", payload).then((res) => res.data);
-}
+// Missions
+export const listerMissions = () => api.get("/missions/").then(data);
+export const creerMission = (payload) =>
+  api.post("/missions/", payload).then(data);
+export const obtenirMission = (id) => api.get(`/missions/${id}`).then(data);
+export const modifierMission = (id, payload) =>
+  api.patch(`/missions/${id}`, payload).then(data);
 
-export function obtenirMission(id) {
-  return api.get(`/missions/${id}`).then((res) => res.data);
-}
+// Axes
+export const listerAxes = (missionId) =>
+  api.get("/axes/", { params: { mission_id: missionId } }).then(data);
+export const creerAxe = (payload) => api.post("/axes/", payload).then(data);
 
-export function listerAxes(missionId) {
-  return api
-    .get("/axes/", { params: { mission_id: missionId } })
-    .then((res) => res.data);
-}
+// Équipes
+export const listerEquipes = (axeId) =>
+  api.get("/equipes/", { params: { axe_id: axeId } }).then(data);
+export const creerEquipe = (payload) =>
+  api.post("/equipes/", payload).then(data);
 
-export function listerEquipes(axeId) {
-  return api
-    .get("/equipes/", { params: { axe_id: axeId } })
-    .then((res) => res.data);
-}
+// Participants
+export const listerParticipants = (equipeId) =>
+  api.get("/participants/", { params: { equipe_id: equipeId } }).then(data);
+export const creerParticipant = (payload) =>
+  api.post("/participants/", payload).then(data);
 
-export function listerParticipants(equipeId) {
-  return api
-    .get("/participants/", { params: { equipe_id: equipeId } })
-    .then((res) => res.data);
-}
+// Districts et liaison axe ↔ district
+export const listerDistricts = () => api.get("/districts/").then(data);
+export const listerMissionsDistricts = (axeId) =>
+  api.get("/missions-districts/", { params: { axe_id: axeId } }).then(data);
+export const creerMissionDistrict = (payload) =>
+  api.post("/missions-districts/", payload).then(data);
+export const modifierMissionDistrict = (id, payload) =>
+  api.patch(`/missions-districts/${id}`, payload).then(data);
 
-export function listerMissionsDistricts(axeId) {
-  return api
-    .get("/missions-districts/", { params: { axe_id: axeId } })
-    .then((res) => res.data);
-}
+// Types d'activité (référentiel)
+export const listerTypesActivite = () => api.get("/types-activite/").then(data);
 
-export function listerDistricts() {
-  return api.get("/districts/").then((res) => res.data);
-}
+// Phases
+export const listerPhases = (missionDistrictId) =>
+  api
+    .get("/phases/", { params: { mission_district_id: missionDistrictId } })
+    .then(data);
+export const modifierPhase = (id, payload) =>
+  api.patch(`/phases/${id}`, payload).then(data);
 
-export function modifierMission(id, payload) {
-  return api.patch(`/missions/${id}`, payload).then((res) => res.data);
-}
+// Journées
+export const listerJournees = (missionDistrictId) =>
+  api
+    .get("/journees/", { params: { mission_district_id: missionDistrictId } })
+    .then(data);
+export const modifierJournee = (id, payload) =>
+  api.patch(`/journees/${id}`, payload).then(data);
 
-export function modifierMissionDistrict(id, payload) {
-  return api
-    .patch(`/missions-districts/${id}`, payload)
-    .then((res) => res.data);
-}
+// Livrables
+export const listerLivrables = (phaseId) =>
+  api.get("/livrables/", { params: { phase_id: phaseId } }).then(data);
+export const modifierLivrable = (id, payload) =>
+  api.patch(`/livrables/${id}`, payload).then(data);
 
-export function supprimerParticipant(id) {
-  return api.delete(`/participants/${id}`);
-}
+// Indicateurs de performance
+export const listerIndicateurs = (missionId) =>
+  api
+    .get("/indicateurs-performance/", { params: { mission_id: missionId } })
+    .then(data);
+export const modifierIndicateur = (id, payload) =>
+  api.patch(`/indicateurs-performance/${id}`, payload).then(data);
 
-export function supprimerEquipe(id) {
-  return api.delete(`/equipes/${id}`);
-}
-
-export function supprimerAxe(id) {
-  return api.delete(`/axes/${id}`);
-}
+// Suppressions (pas encore utilisées dans l'interface)
+export const supprimerParticipant = (id) => api.delete(`/participants/${id}`);
+export const supprimerEquipe = (id) => api.delete(`/equipes/${id}`);
+export const supprimerAxe = (id) => api.delete(`/axes/${id}`);

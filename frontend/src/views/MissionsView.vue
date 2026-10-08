@@ -18,7 +18,7 @@ const dateDebut = ref("");
 const dateFinPrevue = ref("");
 
 const peutCreer = computed(() =>
-  ["chef_mission", "administrateur"].includes(authStore.utilisateur?.nom_role)
+  ["chef_mission", "administrateur"].includes(authStore.utilisateur?.role)
 );
 
 const missionsRecentes = computed(() => [...missions.value].reverse());

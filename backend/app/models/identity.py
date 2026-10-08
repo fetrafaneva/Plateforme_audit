@@ -41,7 +41,6 @@ class Utilisateur(Base):
     matricule: Mapped[str] = mapped_column(String(30), unique=True)
     mot_de_passe_hash: Mapped[str] = mapped_column(String(255))
     id_service: Mapped[int] = mapped_column(ForeignKey("services_communes.id_service"))
-    participations: Mapped[list["Participant"]] = relationship(back_populates="utilisateur")
     id_role: Mapped[int] = mapped_column(ForeignKey("roles_permissions.id_role"))
     statut: Mapped[str] = mapped_column(String(20), default="actif")
     date_creation: Mapped[datetime] = mapped_column(
@@ -50,3 +49,8 @@ class Utilisateur(Base):
 
     service: Mapped["ServiceCommune"] = relationship(back_populates="utilisateurs")
     role: Mapped["Role"] = relationship(back_populates="utilisateurs")
+    participations: Mapped[list["Participant"]] = relationship(back_populates="utilisateur")
+
+    @property
+    def nom_role(self) -> str | None:
+        return self.role.nom_role if self.role else None
