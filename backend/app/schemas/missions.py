@@ -1,5 +1,6 @@
-from datetime import datetime
+from datetime import datetime, date as date_type
 from pydantic import BaseModel
+from typing import Literal
 
 
 class MissionCreate(BaseModel):
@@ -60,6 +61,7 @@ class ParticipantCreate(BaseModel):
     equipe_id: int
     nom: str
     fonction: str | None = None
+    id_utilisateur: int | None = None
 
 
 class ParticipantOut(ParticipantCreate):
@@ -67,3 +69,125 @@ class ParticipantOut(ParticipantCreate):
 
     class Config:
         from_attributes = True
+
+class MissionDistrictCreate(BaseModel):
+    axe_id: int
+    district_id: int
+    ordre_visite: int | None = None
+
+
+class MissionDistrictOut(MissionDistrictCreate):
+    id: int
+    statut: str
+
+    class Config:
+        from_attributes = True
+
+
+class TypeActiviteCreate(BaseModel):
+    libelle: str
+
+
+class TypeActiviteOut(TypeActiviteCreate):
+    id: int
+
+    class Config:
+        from_attributes = True
+
+
+class PhaseCreate(BaseModel):
+    mission_district_id: int
+    type_activite_id: int
+    numero_ordre: int | None = None
+    duree_prevue: str | None = None
+    livrable_attendu: str | None = None
+
+
+class PhaseOut(PhaseCreate):
+    id: int
+    statut: str
+
+    class Config:
+        from_attributes = True
+
+
+class JourneeCreate(BaseModel):
+    mission_district_id: int
+    numero_jour: int | None = None
+    date: date_type | None = None
+    lieu: str | None = None
+
+
+class JourneeOut(JourneeCreate):
+    id: int
+    statut: str
+
+    class Config:
+        from_attributes = True
+
+
+class LivrableCreate(BaseModel):
+    phase_id: int
+    type_livrable: str | None = None
+    date_production: datetime | None = None
+    signe: bool = False
+    fichier: str | None = None
+
+
+class LivrableOut(LivrableCreate):
+    id: int
+
+    class Config:
+        from_attributes = True
+
+
+class IndicateurPerformanceCreate(BaseModel):
+    mission_id: int
+    resultat_attendu: str | None = None
+    indicateur_mesure: str | None = None
+    cible: str | None = None
+    valeur_realisee: str | None = None
+
+
+class IndicateurPerformanceOut(IndicateurPerformanceCreate):
+    id: int
+
+    class Config:
+        from_attributes = True
+
+
+StatutMission = Literal["planifiee", "en_cours", "terminee", "annulee"]
+StatutMissionDistrict = Literal["a_planifier", "planifie", "en_cours", "termine"]
+StatutPhase = Literal["a_faire", "en_cours", "terminee"]
+StatutJournee = Literal["prevue", "realisee", "annulee"]
+
+
+class MissionUpdate(BaseModel):
+    titre: str | None = None
+    type_mission: str | None = None
+    date_debut: datetime | None = None
+    date_fin_prevue: datetime | None = None
+    statut: StatutMission | None = None
+
+
+class MissionDistrictUpdate(BaseModel):
+    ordre_visite: int | None = None
+    statut: StatutMissionDistrict | None = None
+
+
+class PhaseUpdate(BaseModel):
+    statut: StatutPhase
+
+
+class JourneeUpdate(BaseModel):
+    statut: StatutJournee
+
+
+class LivrableUpdate(BaseModel):
+    signe: bool | None = None
+    fichier: str | None = None
+
+
+class IndicateurPerformanceUpdate(BaseModel):
+    cible: str | None = None
+    valeur_realisee: str | None = None

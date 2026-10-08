@@ -3,6 +3,8 @@ import { useAuthStore } from "../stores/auth";
 import LoginView from "../views/LoginView.vue";
 import RegisterView from "../views/RegisterView.vue";
 import DashboardView from "../views/DashboardView.vue";
+import MissionsView from "../views/MissionsView.vue";
+import MissionDetailView from "../views/MissionDetailView.vue";
 
 const routes = [
   { path: "/", redirect: "/dashboard" },
@@ -12,6 +14,18 @@ const routes = [
     path: "/dashboard",
     name: "dashboard",
     component: DashboardView,
+    meta: { requiresAuth: true },
+  },
+  {
+    path: "/missions",
+    name: "missions",
+    component: MissionsView,
+    meta: { requiresAuth: true },
+  },
+  {
+    path: "/missions/:id",
+    name: "mission-detail",
+    component: MissionDetailView,
     meta: { requiresAuth: true },
   },
 ];

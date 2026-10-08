@@ -30,6 +30,10 @@ class UserOut(BaseModel):
         from_attributes = True
 
 
+class UserMeOut(UserOut):
+    role: str
+
+
 class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"

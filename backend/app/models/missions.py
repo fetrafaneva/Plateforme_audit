@@ -1,6 +1,7 @@
-from sqlalchemy import Column, Integer, String, DateTime, Boolean, ForeignKey
+from sqlalchemy import Column, Integer, String, DateTime, Date, Boolean, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import relationship
 from app.db.base import Base
+
 
 class District(Base):
     __tablename__ = "districts"
@@ -21,6 +22,7 @@ class Mission(Base):
     statut = Column(String, default="planifiee")
 
     axes = relationship("Axe", back_populates="mission")
+    indicateurs = relationship("IndicateurPerformance", back_populates="mission")
 
 
 class Axe(Base):
@@ -45,6 +47,8 @@ class MissionDistrict(Base):
 
     axe = relationship("Axe", back_populates="districts")
     district = relationship("District")
+    phases = relationship("Phase", back_populates="mission_district")
+    journees = relationship("Journee", back_populates="mission_district")
 
 
 class Equipe(Base):
@@ -59,10 +63,74 @@ class Equipe(Base):
 
 class Participant(Base):
     __tablename__ = "participants"
+    __table_args__ = (
+        UniqueConstraint("equipe_id", "id_utilisateur", name="uq_participants_equipe_utilisateur"),
+    )
+
     id = Column(Integer, primary_key=True)
     equipe_id = Column(Integer, ForeignKey("equipes.id"), nullable=False)
     nom = Column(String, nullable=False)
     fonction = Column(String)
+    id_utilisateur = Column(Integer, ForeignKey("utilisateurs.id_utilisateur"), nullable=True)
 
     equipe = relationship("Equipe", back_populates="participants")
+    utilisateur = relationship("Utilisateur", back_populates="participations")
 
+
+class TypeActivite(Base):
+    __tablename__ = "types_activite"
+    id = Column(Integer, primary_key=True)
+    libelle = Column(String, nullable=False)  # ex: "Installation serveur", "Formation SII CSB"
+
+    phases = relationship("Phase", back_populates="type_activite")
+
+
+class Phase(Base):
+    __tablename__ = "phases"
+    id = Column(Integer, primary_key=True)
+    mission_district_id = Column(Integer, ForeignKey("missions_districts.id"), nullable=False)
+    type_activite_id = Column(Integer, ForeignKey("types_activite.id"), nullable=False)
+    numero_ordre = Column(Integer)
+    duree_prevue = Column(String)  # ex: "J1-J2"
+    livrable_attendu = Column(String)
+    statut = Column(String, default="a_faire")
+
+    mission_district = relationship("MissionDistrict", back_populates="phases")
+    type_activite = relationship("TypeActivite", back_populates="phases")
+    livrables = relationship("Livrable", back_populates="phase")
+
+
+class Journee(Base):
+    __tablename__ = "journees"
+    id = Column(Integer, primary_key=True)
+    mission_district_id = Column(Integer, ForeignKey("missions_districts.id"), nullable=False)
+    numero_jour = Column(Integer)
+    date = Column(Date)
+    lieu = Column(String)
+    statut = Column(String, default="prevue")
+
+    mission_district = relationship("MissionDistrict", back_populates="journees")
+
+
+class Livrable(Base):
+    __tablename__ = "livrables"
+    id = Column(Integer, primary_key=True)
+    phase_id = Column(Integer, ForeignKey("phases.id"), nullable=False)
+    type_livrable = Column(String)
+    date_production = Column(DateTime)
+    signe = Column(Boolean, default=False)
+    fichier = Column(String)
+
+    phase = relationship("Phase", back_populates="livrables")
+
+
+class IndicateurPerformance(Base):
+    __tablename__ = "indicateurs_performance"
+    id = Column(Integer, primary_key=True)
+    mission_id = Column(Integer, ForeignKey("missions.id"), nullable=False)
+    resultat_attendu = Column(String)
+    indicateur_mesure = Column(String)
+    cible = Column(String)
+    valeur_realisee = Column(String)
+
+    mission = relationship("Mission", back_populates="indicateurs")
