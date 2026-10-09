@@ -25,6 +25,10 @@ import {
   modifierLivrable,
   listerIndicateurs,
   modifierIndicateur,
+  creerPhase,
+  creerJournee,
+  creerLivrable,
+  creerIndicateur,
 } from "../services/missions";
 
 const route = useRoute();
@@ -35,12 +39,15 @@ const axesDetails = ref([]);
 const districts = ref([]);
 const indicateurs = ref([]);
 const typesParId = ref({});
+const typesActivite = ref([]);
+// Formulaire ouvert à l'intérieur de la fenêtre de suivi : { type: "phase" | "journee" | "livrable", phaseId? }
+const sousFormulaire = ref(null);
 const chargement = ref(true);
 const erreur = ref("");
 const erreurAction = ref("");
 const envoi = ref(false);
 
-// Fenêtre modale ouverte : { type: "axe" | "equipe" | "participant" | "district" | "suivi", ...contexte }
+// Fenêtre modale ouverte : { type: "axe" | "equipe" | "participant" | "district" | "suivi" | "indicateur", ...contexte }
 const modale = ref(null);
 const erreurModale = ref("");
 const ongletSuivi = ref("phases");
@@ -52,15 +59,31 @@ const details = reactive({});
 const indicateurEnEdition = ref(null);
 const valeurEdition = ref("");
 
-const champs = reactive({
-  numeroAxe: "",
-  itineraire: "",
-  districtId: "",
-  ordreVisite: "",
-  typeEquipe: "",
-  nomParticipant: "",
-  fonction: "",
-});
+function champsVides() {
+  return {
+    numeroAxe: "",
+    itineraire: "",
+    districtId: "",
+    ordreVisite: "",
+    typeEquipe: "",
+    nomParticipant: "",
+    fonction: "",
+    phaseTypeId: "",
+    phaseOrdre: "",
+    phaseDuree: "",
+    phaseLivrable: "",
+    journeeNumero: "",
+    journeeDate: "",
+    journeeLieu: "",
+    livrableType: "",
+    livrableDate: "",
+    resultat: "",
+    mesure: "",
+    cible: "",
+    realise: "",
+  };
+}
+const champs = reactive(champsVides());
 
 // Planifier : chef de mission et administrateur
 const peutPlanifier = computed(() =>
@@ -220,19 +243,13 @@ const titreModale = computed(() => {
       ? `Suivi du district : ${mdCourant.value.nom}`
       : "Suivi du district";
   }
+  if (m.type === "indicateur") return "Nouvel indicateur";
   return "";
 });
 
 function ouvrirModale(type, contexte = {}) {
-  Object.assign(champs, {
-    numeroAxe: "",
-    itineraire: "",
-    districtId: "",
-    ordreVisite: "",
-    typeEquipe: "",
-    nomParticipant: "",
-    fonction: "",
-  });
+  Object.assign(champs, champsVides());
+  sousFormulaire.value = null;
   erreurModale.value = "";
   ongletSuivi.value = "phases";
   if (type === "axe") {
@@ -246,6 +263,7 @@ function ouvrirModale(type, contexte = {}) {
 
 function fermerModale() {
   modale.value = null;
+  sousFormulaire.value = null;
   erreurModale.value = "";
 }
 
@@ -266,6 +284,7 @@ async function charger(silencieux = false) {
     ]);
     districts.value = listeDistricts;
     indicateurs.value = listeIndicateurs;
+    typesActivite.value = types;
     typesParId.value = Object.fromEntries(types.map((t) => [t.id, t.libelle]));
     const districtsParId = Object.fromEntries(
       listeDistricts.map((d) => [d.id, d.nom])
@@ -473,6 +492,84 @@ function lierDistrict() {
   );
 }
 
+// ---------- Formulaires dans la fenêtre de suivi ----------
+
+function ouvrirSousFormulaire(type, contexte = {}) {
+  Object.assign(champs, champsVides());
+  erreurModale.value = "";
+  const suivi = details[modale.value.mdId];
+  if (type === "phase") champs.phaseOrdre = (suivi?.phases.length ?? 0) + 1;
+  if (type === "journee")
+    champs.journeeNumero = (suivi?.journees.length ?? 0) + 1;
+  sousFormulaire.value = { type, ...contexte };
+}
+
+function fermerSousFormulaire() {
+  sousFormulaire.value = null;
+  erreurModale.value = "";
+}
+
+async function executerSousFormulaire(action) {
+  erreurModale.value = "";
+  envoi.value = true;
+  try {
+    await action();
+    sousFormulaire.value = null;
+    await chargerSuivi(modale.value.mdId, true);
+  } catch (e) {
+    erreurModale.value = messageErreur(e);
+  } finally {
+    envoi.value = false;
+  }
+}
+
+function ajouterPhase() {
+  return executerSousFormulaire(() =>
+    creerPhase({
+      mission_district_id: modale.value.mdId,
+      type_activite_id: Number(champs.phaseTypeId),
+      numero_ordre: champs.phaseOrdre ? Number(champs.phaseOrdre) : null,
+      duree_prevue: champs.phaseDuree.trim() || null,
+      livrable_attendu: champs.phaseLivrable.trim() || null,
+    })
+  );
+}
+
+function ajouterJournee() {
+  return executerSousFormulaire(() =>
+    creerJournee({
+      mission_district_id: modale.value.mdId,
+      numero_jour: champs.journeeNumero ? Number(champs.journeeNumero) : null,
+      date: champs.journeeDate || null,
+      lieu: champs.journeeLieu.trim() || null,
+    })
+  );
+}
+
+function ajouterLivrable() {
+  return executerSousFormulaire(() =>
+    creerLivrable({
+      phase_id: sousFormulaire.value.phaseId,
+      type_livrable: champs.livrableType.trim() || null,
+      date_production: champs.livrableDate
+        ? `${champs.livrableDate}T00:00:00`
+        : null,
+    })
+  );
+}
+
+function ajouterIndicateur() {
+  return executerFormulaire(() =>
+    creerIndicateur({
+      mission_id: mission.value.id,
+      resultat_attendu: champs.resultat.trim() || null,
+      indicateur_mesure: champs.mesure.trim() || null,
+      cible: champs.cible.trim() || null,
+      valeur_realisee: champs.realise.trim() || null,
+    })
+  );
+}
+
 // ---------- Actions sur la mission ----------
 
 async function changerStatutMission(vers) {
@@ -547,6 +644,14 @@ onMounted(async () => {
         <!-- Indicateurs de performance -->
         <section class="card">
           <p class="eyebrow">Indicateurs de performance</p>
+          <button
+            v-if="peutPlanifier"
+            class="btn btn-outline btn-sm"
+            style="margin-bottom: 0.8rem"
+            @click="ouvrirModale('indicateur')"
+          >
+            + Ajouter un indicateur
+          </button>
           <p v-if="indicateurs.length === 0" class="muted">
             Aucun indicateur défini pour cette mission.
           </p>
@@ -883,6 +988,60 @@ onMounted(async () => {
         </div>
       </form>
 
+      <!-- Nouvel indicateur -->
+      <form
+        v-else-if="modale.type === 'indicateur'"
+        @submit.prevent="ajouterIndicateur"
+      >
+        <div class="field">
+          <label for="ind-resultat">Résultat attendu</label>
+          <input
+            id="ind-resultat"
+            v-model="champs.resultat"
+            placeholder="ex : 16 serveurs opérationnels"
+            required
+          />
+        </div>
+        <div class="field">
+          <label for="ind-mesure">Indicateur de mesure</label>
+          <input
+            id="ind-mesure"
+            v-model="champs.mesure"
+            placeholder="ex : Nombre de serveurs"
+          />
+        </div>
+        <div class="grid-2">
+          <div class="field">
+            <label for="ind-cible">Cible</label>
+            <input
+              id="ind-cible"
+              v-model="champs.cible"
+              placeholder="ex : 16"
+            />
+          </div>
+          <div class="field">
+            <label for="ind-realise">Réalisé (facultatif)</label>
+            <input id="ind-realise" v-model="champs.realise" />
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button
+            type="button"
+            class="btn btn-outline btn-sm"
+            @click="fermerModale"
+          >
+            Annuler
+          </button>
+          <button
+            type="submit"
+            class="btn btn-primary btn-sm"
+            :disabled="envoi"
+          >
+            Créer l'indicateur
+          </button>
+        </div>
+      </form>
+
       <!-- Suivi d'un district -->
       <template v-else-if="modale.type === 'suivi' && mdCourant">
         <div class="entete-suivi">
@@ -902,7 +1061,7 @@ onMounted(async () => {
           </template>
         </div>
 
-        <div class="onglets">
+        <div v-if="!sousFormulaire" class="onglets">
           <button
             type="button"
             class="onglet"
@@ -931,7 +1090,160 @@ onMounted(async () => {
           {{ details[mdCourant.id].erreur }}
         </p>
 
+        <template v-else-if="sousFormulaire">
+          <!-- Nouvelle phase -->
+          <form
+            v-if="sousFormulaire.type === 'phase'"
+            @submit.prevent="ajouterPhase"
+          >
+            <p v-if="typesActivite.length === 0" class="muted">
+              Aucun type d'activité : un administrateur doit d'abord en créer.
+            </p>
+            <template v-else>
+              <div class="field">
+                <label for="phase-type">Type d'activité</label>
+                <select id="phase-type" v-model="champs.phaseTypeId" required>
+                  <option value="" disabled>Choisir une activité</option>
+                  <option v-for="t in typesActivite" :key="t.id" :value="t.id">
+                    {{ t.libelle }}
+                  </option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="phase-ordre">Ordre</label>
+                <input
+                  id="phase-ordre"
+                  v-model="champs.phaseOrdre"
+                  type="number"
+                  min="1"
+                />
+              </div>
+              <div class="field">
+                <label for="phase-duree">Durée prévue</label>
+                <input
+                  id="phase-duree"
+                  v-model="champs.phaseDuree"
+                  placeholder="ex : J1-J2"
+                />
+              </div>
+              <div class="field">
+                <label for="phase-livrable">Livrable attendu</label>
+                <input
+                  id="phase-livrable"
+                  v-model="champs.phaseLivrable"
+                  placeholder="ex : PV d'installation"
+                />
+              </div>
+            </template>
+            <div class="modal-actions">
+              <button
+                type="button"
+                class="btn btn-outline btn-sm"
+                @click="fermerSousFormulaire"
+              >
+                Retour
+              </button>
+              <button
+                v-if="typesActivite.length"
+                type="submit"
+                class="btn btn-primary btn-sm"
+                :disabled="envoi"
+              >
+                Créer la phase
+              </button>
+            </div>
+          </form>
+
+          <!-- Nouvelle journée -->
+          <form
+            v-else-if="sousFormulaire.type === 'journee'"
+            @submit.prevent="ajouterJournee"
+          >
+            <div class="field">
+              <label for="jour-num">Numéro du jour</label>
+              <input
+                id="jour-num"
+                v-model="champs.journeeNumero"
+                type="number"
+                min="1"
+              />
+            </div>
+            <div class="field">
+              <label for="jour-date">Date</label>
+              <input id="jour-date" v-model="champs.journeeDate" type="date" />
+            </div>
+            <div class="field">
+              <label for="jour-lieu">Lieu</label>
+              <input
+                id="jour-lieu"
+                v-model="champs.journeeLieu"
+                placeholder="ex : Ambovombe"
+              />
+            </div>
+            <div class="modal-actions">
+              <button
+                type="button"
+                class="btn btn-outline btn-sm"
+                @click="fermerSousFormulaire"
+              >
+                Retour
+              </button>
+              <button
+                type="submit"
+                class="btn btn-primary btn-sm"
+                :disabled="envoi"
+              >
+                Créer la journée
+              </button>
+            </div>
+          </form>
+
+          <!-- Nouveau livrable -->
+          <form
+            v-else-if="sousFormulaire.type === 'livrable'"
+            @submit.prevent="ajouterLivrable"
+          >
+            <div class="field">
+              <label for="liv-type">Type de livrable</label>
+              <input
+                id="liv-type"
+                v-model="champs.livrableType"
+                placeholder="ex : PV de formation"
+                required
+              />
+            </div>
+            <div class="field">
+              <label for="liv-date">Date de production</label>
+              <input id="liv-date" v-model="champs.livrableDate" type="date" />
+            </div>
+            <div class="modal-actions">
+              <button
+                type="button"
+                class="btn btn-outline btn-sm"
+                @click="fermerSousFormulaire"
+              >
+                Retour
+              </button>
+              <button
+                type="submit"
+                class="btn btn-primary btn-sm"
+                :disabled="envoi"
+              >
+                Créer le livrable
+              </button>
+            </div>
+          </form>
+        </template>
+
         <template v-else-if="ongletSuivi === 'phases'">
+          <div v-if="peutPlanifier" class="barre-suivi">
+            <button
+              class="btn btn-primary btn-sm"
+              @click="ouvrirSousFormulaire('phase')"
+            >
+              + Ajouter une phase
+            </button>
+          </div>
           <p v-if="details[mdCourant.id].phases.length === 0" class="muted">
             Aucune phase définie pour ce district.
           </p>
@@ -994,10 +1306,25 @@ onMounted(async () => {
               </li>
             </ul>
             <p v-else class="muted petit">Aucun livrable enregistré.</p>
+            <button
+              v-if="peutSaisir"
+              class="btn btn-outline btn-sm"
+              @click="ouvrirSousFormulaire('livrable', { phaseId: p.id })"
+            >
+              + Livrable
+            </button>
           </div>
         </template>
 
         <template v-else>
+          <div v-if="peutSaisir" class="barre-suivi">
+            <button
+              class="btn btn-primary btn-sm"
+              @click="ouvrirSousFormulaire('journee')"
+            >
+              + Ajouter une journée
+            </button>
+          </div>
           <p v-if="details[mdCourant.id].journees.length === 0" class="muted">
             Aucune journée enregistrée pour ce district.
           </p>
@@ -1141,6 +1468,12 @@ onMounted(async () => {
 .petit {
   margin: 0.2rem 0 0.4rem;
   font-size: 0.85rem;
+}
+
+.barre-suivi {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 0.8rem;
 }
 
 /* Tableau des indicateurs */
