@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, require_role
+from app.core.alertes import evaluer_alerte
 from app.core.analytics import construire_profil, detecter_anomalie
 from app.db.base import get_db
 from app.models.identity import Utilisateur
@@ -40,6 +41,9 @@ def calculer_score(
     db: Session = Depends(get_db),
 ):
     try:
-        return detecter_anomalie(db, id_entree_journal)
+        score = detecter_anomalie(db, id_entree_journal)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    # Crée une alerte si le z-score dépasse les seuils de la politique en vigueur.
+    evaluer_alerte(db, score)
+    return score
