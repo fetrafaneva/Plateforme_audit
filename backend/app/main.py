@@ -6,6 +6,7 @@ from sqlalchemy.exc import IntegrityError
 from app.api.analyse import router as analyse_router
 from app.api.auth import router as auth_router
 from app.api.journal import router as journal_router
+from app.api.audit import router as audit_router
 from app.api.missions import (
     router as missions_router,
     axes_router,
@@ -52,6 +53,7 @@ app.include_router(phases_router)
 app.include_router(journees_router)
 app.include_router(livrables_router)
 app.include_router(indicateurs_router)
+app.include_router(audit_router)
 
 
 @app.get("/health")

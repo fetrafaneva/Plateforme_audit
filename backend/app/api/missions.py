@@ -234,7 +234,12 @@ def lister_journees(mission_district_id: int | None = None, db: Session = Depend
 # --- Livrables (accessibles au technicien sur le terrain) ---
 
 @livrables_router.post("/", response_model=LivrableOut, dependencies=[Depends(require_role("technicien", "chef_mission", "administrateur"))])
-def creer_livrable(payload: LivrableCreate, db: Session = Depends(get_db)):
+def creer_livrable(payload: LivrableCreate, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    if payload.signe and current_user.role.nom_role not in ("chef_mission", "administrateur"):
+        raise HTTPException(
+            status_code=403,
+            detail="Seul un chef de mission ou un administrateur peut signer un livrable",
+        )
     if not db.query(Phase).filter(Phase.id == payload.phase_id).first():
         raise HTTPException(status_code=404, detail="Phase introuvable")
     livrable = Livrable(**payload.model_dump())

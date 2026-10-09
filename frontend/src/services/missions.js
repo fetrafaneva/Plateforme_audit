@@ -73,3 +73,12 @@ export const modifierIndicateur = (id, payload) =>
 export const supprimerParticipant = (id) => api.delete(`/participants/${id}`);
 export const supprimerEquipe = (id) => api.delete(`/equipes/${id}`);
 export const supprimerAxe = (id) => api.delete(`/axes/${id}`);
+
+// Créations (phases, journées, livrables, indicateurs)
+export const creerPhase = (payload) => api.post("/phases/", payload).then(data);
+export const creerJournee = (payload) =>
+  api.post("/journees/", payload).then(data);
+export const creerLivrable = (payload) =>
+  api.post("/livrables/", payload).then(data);
+export const creerIndicateur = (payload) =>
+  api.post("/indicateurs-performance/", payload).then(data);

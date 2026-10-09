@@ -1,10 +1,10 @@
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import asc
+from sqlalchemy import asc, text
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, require_role
 from app.core.chaining import GENESIS_HASH, compute_hash
 from app.db.base import get_db
 from app.models.audit import JournalAcces
@@ -13,6 +13,10 @@ from app.schemas.journal import JournalEntryCreate, JournalEntryOut, Verificatio
 
 router = APIRouter(prefix="/journal", tags=["journal d'accès"])
 
+# Clé du verrou PostgreSQL qui sérialise l'écriture dans le journal.
+# N'importe quel entier convient, tant qu'il est le même pour toutes les écritures.
+VERROU_CHAINE = 7001
+
 
 @router.post("/acces", response_model=JournalEntryOut, status_code=201)
 def enregistrer_acces(
@@ -20,6 +24,11 @@ def enregistrer_acces(
     current_user: Utilisateur = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    # Une seule écriture à la fois peut lire « la dernière entrée » et s'y chaîner.
+    # Sans ce verrou, deux requêtes simultanées se chaîneraient à la même entrée
+    # précédente et la chaîne se diviserait. Le verrou est relâché au commit.
+    db.execute(text(f"SELECT pg_advisory_xact_lock({VERROU_CHAINE})"))
+
     derniere_entree = (
         db.query(JournalAcces).order_by(JournalAcces.id_entree.desc()).first()
     )
@@ -49,7 +58,11 @@ def enregistrer_acces(
     return entree
 
 
-@router.get("/verify", response_model=VerificationResult)
+@router.get(
+    "/verify",
+    response_model=VerificationResult,
+    dependencies=[Depends(require_role("auditeur", "administrateur"))],
+)
 def verifier_integrite(db: Session = Depends(get_db)):
     """Rejoue toute la chaîne depuis le début et recalcule chaque hash.
     Si une seule entrée a été modifiée après coup, le hash recalculé ne
