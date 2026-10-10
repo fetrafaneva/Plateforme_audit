@@ -191,3 +191,9 @@ class LivrableUpdate(BaseModel):
 class IndicateurPerformanceUpdate(BaseModel):
     cible: str | None = None
     valeur_realisee: str | None = None
+
+
+class ParticipantUpdate(BaseModel):
+    nom: str | None = None
+    fonction: str | None = None
+    id_utilisateur: int | None = None
