@@ -12,6 +12,7 @@ import {
   cloturerInvestigation,
   listerProfils,
   listerRessources,
+  obtenirFiche,
 } from "../services/audit";
 
 const PAGE = 50;
@@ -48,6 +49,12 @@ const chargementProfils = ref(false);
 const verification = ref(null);
 const verificationEnCours = ref(false);
 
+// Fiche d'un utilisateur (identité, profil, missions, alertes)
+const ficheOuverte = ref(false);
+const fiche = ref(null);
+const chargementFiche = ref(false);
+const erreurFiche = ref("");
+
 function messageErreur(e, defaut = "L'opération a échoué.") {
   const detail = e.response?.data?.detail;
   return typeof detail === "string" ? detail : defaut;
@@ -59,7 +66,10 @@ function libelle(valeur) {
 
 function formaterDateHeure(d) {
   return d
-    ? new Date(d).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" })
+    ? new Date(d).toLocaleString("fr-FR", {
+        dateStyle: "short",
+        timeStyle: "short",
+      })
     : "—";
 }
 
@@ -79,7 +89,8 @@ function classeGravite(g) {
 
 function classeStatut(s) {
   if (s === "traitee" || s === "cloturee") return "badge-ok";
-  if (s === "nouvelle" || s === "ouverte") return "badge-info";
+  if (s === "nouvelle" || s === "ouverte" || s === "en_cours")
+    return "badge-info";
   return "badge-neutral";
 }
 
@@ -121,7 +132,10 @@ async function chargerJournal(reinitialiser = false) {
   }
   chargementJournal.value = true;
   try {
-    const page = await listerJournal({ limit: PAGE, offset: journal.value.length });
+    const page = await listerJournal({
+      limit: PAGE,
+      offset: journal.value.length,
+    });
     journal.value = [...journal.value, ...page];
     journalComplet.value = page.length < PAGE;
   } catch (e) {
@@ -136,7 +150,10 @@ async function chargerInvestigations() {
   try {
     investigations.value = await listerInvestigations();
   } catch (e) {
-    erreur.value = messageErreur(e, "Impossible de charger les investigations.");
+    erreur.value = messageErreur(
+      e,
+      "Impossible de charger les investigations."
+    );
   } finally {
     chargementInvestigations.value = false;
   }
@@ -145,7 +162,10 @@ async function chargerInvestigations() {
 async function chargerProfils() {
   chargementProfils.value = true;
   try {
-    const [liste, ressources] = await Promise.all([listerProfils(), listerRessources()]);
+    const [liste, ressources] = await Promise.all([
+      listerProfils(),
+      listerRessources(),
+    ]);
     profils.value = liste;
     ressourcesParId.value = Object.fromEntries(
       ressources.map((r) => [r.id_ressource, r.type_ressource])
@@ -155,6 +175,35 @@ async function chargerProfils() {
   } finally {
     chargementProfils.value = false;
   }
+}
+
+async function ouvrirFiche(idUtilisateur) {
+  ficheOuverte.value = true;
+  fiche.value = null;
+  erreurFiche.value = "";
+  chargementFiche.value = true;
+  try {
+    const besoinRessources = Object.keys(ressourcesParId.value).length === 0;
+    const [donnees, ressources] = await Promise.all([
+      obtenirFiche(idUtilisateur),
+      besoinRessources ? listerRessources() : Promise.resolve(null),
+    ]);
+    if (ressources) {
+      ressourcesParId.value = Object.fromEntries(
+        ressources.map((r) => [r.id_ressource, r.type_ressource])
+      );
+    }
+    fiche.value = donnees;
+  } catch (e) {
+    erreurFiche.value = messageErreur(e, "Impossible de charger la fiche.");
+  } finally {
+    chargementFiche.value = false;
+  }
+}
+
+function fermerFiche() {
+  ficheOuverte.value = false;
+  fiche.value = null;
 }
 
 function choisirOnglet(nom) {
@@ -262,11 +311,15 @@ onMounted(() => {
       <!-- Synthèse -->
       <section class="stats">
         <div class="card card-hover stat">
-          <span class="stat-valeur">{{ resume ? resume.nb_entrees_journal : "…" }}</span>
+          <span class="stat-valeur">{{
+            resume ? resume.nb_entrees_journal : "…"
+          }}</span>
           <span class="stat-label">Accès journalisés</span>
         </div>
         <div class="card card-hover stat">
-          <span class="stat-valeur">{{ resume ? resume.nb_alertes_nouvelles : "…" }}</span>
+          <span class="stat-valeur">{{
+            resume ? resume.nb_alertes_nouvelles : "…"
+          }}</span>
           <span class="stat-label">Alertes nouvelles</span>
         </div>
         <div class="card card-hover stat">
@@ -289,7 +342,8 @@ onMounted(() => {
           <div>
             <p class="eyebrow">Intégrité du journal</p>
             <p class="muted" style="margin: 0">
-              Rejoue toute la chaîne de hash et signale la première entrée modifiée.
+              Rejoue toute la chaîne de hash et signale la première entrée
+              modifiée.
             </p>
           </div>
           <button
@@ -297,11 +351,14 @@ onMounted(() => {
             :disabled="verificationEnCours"
             @click="verifier"
           >
-            {{ verificationEnCours ? "Vérification..." : "Vérifier l'intégrité" }}
+            {{
+              verificationEnCours ? "Vérification..." : "Vérifier l'intégrité"
+            }}
           </button>
         </div>
         <p v-if="verification && verification.intact" class="verif verif-ok">
-          Chaîne intacte : {{ verification.nb_entrees_verifiees }} entrées vérifiées.
+          Chaîne intacte : {{ verification.nb_entrees_verifiees }} entrées
+          vérifiées.
         </p>
         <p v-else-if="verification" class="verif verif-ko">
           Chaîne corrompue à partir de l'entrée n°{{
@@ -337,7 +394,11 @@ onMounted(() => {
       <section v-if="onglet === 'alertes'" class="card">
         <div class="barre-filtre">
           <label for="filtre-statut">Statut</label>
-          <select id="filtre-statut" v-model="filtreStatut" @change="chargerAlertes">
+          <select
+            id="filtre-statut"
+            v-model="filtreStatut"
+            @change="chargerAlertes"
+          >
             <option value="">Toutes</option>
             <option value="nouvelle">Nouvelles</option>
             <option value="en_investigation">En investigation</option>
@@ -362,11 +423,20 @@ onMounted(() => {
             <tbody>
               <tr v-for="a in alertes" :key="a.id_alerte">
                 <td>
-                  <span class="badge" :class="classeGravite(a.niveau_gravite)">{{
-                    a.niveau_gravite
-                  }}</span>
+                  <span
+                    class="badge"
+                    :class="classeGravite(a.niveau_gravite)"
+                    >{{ a.niveau_gravite }}</span
+                  >
                 </td>
-                <td>{{ a.nom_utilisateur }}</td>
+                <td>
+                  <button
+                    class="lien-nom"
+                    @click="ouvrirFiche(a.id_utilisateur)"
+                  >
+                    {{ a.nom_utilisateur }}
+                  </button>
+                </td>
                 <td>{{ formaterDateHeure(a.horodatage) }}</td>
                 <td>
                   <strong>{{ formaterZ(a.z_score) }}</strong>
@@ -414,7 +484,11 @@ onMounted(() => {
           Aucune investigation.
         </p>
         <ul v-else class="list-clean">
-          <li v-for="i in investigations" :key="i.id_investigation" class="investigation">
+          <li
+            v-for="i in investigations"
+            :key="i.id_investigation"
+            class="investigation"
+          >
             <div class="ligne-simple">
               <span>
                 <strong>Enquête n°{{ i.id_investigation }}</strong>
@@ -424,7 +498,9 @@ onMounted(() => {
                 }}</span>
               </span>
               <span class="actions-ligne">
-                <span class="badge" :class="classeStatut(i.statut)">{{ i.statut }}</span>
+                <span class="badge" :class="classeStatut(i.statut)">{{
+                  i.statut
+                }}</span>
                 <button
                   v-if="i.statut === 'ouverte'"
                   class="btn btn-outline btn-sm"
@@ -448,8 +524,12 @@ onMounted(() => {
 
       <!-- Journal -->
       <section v-else-if="onglet === 'journal'" class="card">
-        <p v-if="journal.length === 0 && chargementJournal" class="muted">Chargement...</p>
-        <p v-else-if="journal.length === 0" class="muted">Le journal est vide.</p>
+        <p v-if="journal.length === 0 && chargementJournal" class="muted">
+          Chargement...
+        </p>
+        <p v-else-if="journal.length === 0" class="muted">
+          Le journal est vide.
+        </p>
         <template v-else>
           <div class="defilement">
             <table class="tableau">
@@ -468,12 +548,21 @@ onMounted(() => {
                 <tr v-for="e in journal" :key="e.id_entree">
                   <td>{{ e.id_entree }}</td>
                   <td>{{ formaterDateHeure(e.horodatage) }}</td>
-                  <td>{{ e.nom_utilisateur }}</td>
+                  <td>
+                    <button
+                      class="lien-nom"
+                      @click="ouvrirFiche(e.id_utilisateur)"
+                    >
+                      {{ e.nom_utilisateur }}
+                    </button>
+                  </td>
                   <td>{{ e.type_action }}</td>
                   <td>{{ e.type_ressource }}</td>
                   <td>{{ e.adresse_ip }}</td>
                   <td>
-                    <code :title="e.hash_entree">{{ courtHash(e.hash_entree) }}</code>
+                    <code :title="e.hash_entree">{{
+                      courtHash(e.hash_entree)
+                    }}</code>
                   </td>
                 </tr>
               </tbody>
@@ -488,7 +577,9 @@ onMounted(() => {
             >
               {{ chargementJournal ? "Chargement..." : "Charger plus" }}
             </button>
-            <span v-else class="muted petit">Fin du journal ({{ journal.length }} entrées).</span>
+            <span v-else class="muted petit"
+              >Fin du journal ({{ journal.length }} entrées).</span
+            >
           </div>
         </template>
       </section>
@@ -496,7 +587,9 @@ onMounted(() => {
       <!-- Profils -->
       <section v-else class="card">
         <p v-if="chargementProfils" class="muted">Chargement...</p>
-        <p v-else-if="profils.length === 0" class="muted">Aucun profil calculé.</p>
+        <p v-else-if="profils.length === 0" class="muted">
+          Aucun profil calculé.
+        </p>
         <div v-else class="defilement">
           <table class="tableau">
             <thead>
@@ -506,17 +599,37 @@ onMounted(() => {
                 <th>Accès / jour</th>
                 <th>Horaires habituels</th>
                 <th>Ressources habituelles</th>
+                <th>Missions</th>
               </tr>
             </thead>
             <tbody>
               <tr v-for="p in profils" :key="p.id_profil">
-                <td>{{ p.nom_utilisateur }}</td>
+                <td>
+                  <button
+                    class="lien-nom"
+                    @click="ouvrirFiche(p.id_utilisateur)"
+                  >
+                    {{ p.nom_utilisateur }}
+                  </button>
+                </td>
                 <td>{{ p.periode_reference }}</td>
                 <td>
                   <strong>{{ p.volume_moyen.toFixed(1) }}</strong>
                 </td>
                 <td>{{ p.horaires_habituels }}</td>
                 <td>{{ nomsRessources(p.perimetre_habituel) }}</td>
+                <td>
+                  <span v-if="p.missions.length === 0" class="muted"
+                    >Aucune</span
+                  >
+                  <span
+                    v-for="titre in p.missions"
+                    :key="titre"
+                    class="badge badge-neutral puce"
+                  >
+                    {{ titre }}
+                  </span>
+                </td>
               </tr>
             </tbody>
           </table>
@@ -545,7 +658,11 @@ onMounted(() => {
           <small class="muted">{{ conclusion.length }}/500</small>
         </div>
         <div class="modal-actions">
-          <button type="button" class="btn btn-outline btn-sm" @click="fermerCloture">
+          <button
+            type="button"
+            class="btn btn-outline btn-sm"
+            @click="fermerCloture"
+          >
             Annuler
           </button>
           <button
@@ -557,6 +674,85 @@ onMounted(() => {
           </button>
         </div>
       </form>
+    </ModalDialog>
+
+    <!-- Fiche d'un utilisateur -->
+    <ModalDialog
+      v-if="ficheOuverte"
+      :titre="fiche ? `${fiche.prenom} ${fiche.nom}` : 'Fiche utilisateur'"
+      large
+      @fermer="fermerFiche"
+    >
+      <p v-if="chargementFiche" class="muted">Chargement...</p>
+      <p v-else-if="erreurFiche" class="alert-error">{{ erreurFiche }}</p>
+
+      <template v-else-if="fiche">
+        <p class="fiche-identite">
+          <span class="badge badge-neutral">{{ libelle(fiche.role) }}</span>
+          <span
+            class="badge"
+            :class="fiche.statut === 'actif' ? 'badge-ok' : 'badge-off'"
+            >{{ fiche.statut }}</span
+          >
+          <span class="muted">
+            {{ fiche.service }} · matricule {{ fiche.matricule }} ·
+            {{ fiche.email }}
+          </span>
+        </p>
+
+        <p class="eyebrow">Comportement</p>
+        <p v-if="!fiche.profil" class="muted">
+          Aucun profil calculé ({{ fiche.nb_acces }} accès journalisés).
+        </p>
+        <ul v-else class="list-clean fiche-liste">
+          <li>
+            <strong>{{ fiche.profil.volume_moyen.toFixed(1) }}</strong> accès
+            par jour en moyenne ({{ fiche.nb_acces }} accès au total)
+          </li>
+          <li>Horaires habituels : {{ fiche.profil.horaires_habituels }}</li>
+          <li>
+            Ressources habituelles :
+            {{ nomsRessources(fiche.profil.perimetre_habituel) }}
+          </li>
+        </ul>
+
+        <p class="eyebrow">Missions</p>
+        <p v-if="fiche.participations.length === 0" class="muted">
+          Aucune mission : aucun participant n'est lié à ce compte.
+        </p>
+        <ul v-else class="list-clean fiche-liste">
+          <li v-for="part in fiche.participations" :key="part.id_participant">
+            <RouterLink
+              :to="{ name: 'mission-detail', params: { id: part.id_mission } }"
+            >
+              {{ part.titre_mission }}
+            </RouterLink>
+            <span class="badge" :class="classeStatut(part.statut_mission)">{{
+              libelle(part.statut_mission)
+            }}</span>
+            <small class="muted">
+              Axe {{ part.numero_axe ?? "–" }} ·
+              {{ part.type_equipe || "équipe" }} ·
+              {{ part.fonction || "fonction non précisée" }}
+            </small>
+          </li>
+        </ul>
+
+        <p class="eyebrow">Alertes récentes</p>
+        <p v-if="fiche.alertes.length === 0" class="muted">Aucune alerte.</p>
+        <ul v-else class="list-clean fiche-liste">
+          <li v-for="a in fiche.alertes" :key="a.id_alerte">
+            <span class="badge" :class="classeGravite(a.niveau_gravite)">{{
+              a.niveau_gravite
+            }}</span>
+            <span>{{ formaterDateHeure(a.horodatage) }}</span>
+            <strong>{{ formaterZ(a.z_score) }}</strong>
+            <span class="badge" :class="classeStatut(a.statut)">{{
+              libelle(a.statut)
+            }}</span>
+          </li>
+        </ul>
+      </template>
     </ModalDialog>
   </div>
 </template>
@@ -751,5 +947,41 @@ onMounted(() => {
 
 code {
   font-size: 0.8rem;
+}
+
+.lien-nom {
+  padding: 0;
+  background: none;
+  border: none;
+  font: inherit;
+  font-weight: 600;
+  color: var(--violet);
+  text-align: left;
+  cursor: pointer;
+}
+
+.lien-nom:hover {
+  text-decoration: underline;
+}
+
+.puce {
+  margin: 0 0.3rem 0.2rem 0;
+}
+
+.fiche-identite {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0 0 1.2rem;
+}
+
+.fiche-liste li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.45rem 0;
+  border-bottom: 1px solid var(--border);
 }
 </style>

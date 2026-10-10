@@ -29,3 +29,7 @@ export const cloturerInvestigation = (id, conclusion) =>
 // Profils et ressources
 export const listerProfils = () => api.get("/audit/profils").then(data);
 export const listerRessources = () => api.get("/audit/ressources").then(data);
+
+// Fiche d'un utilisateur : profil, alertes et missions (lien avec le module Missions)
+export const obtenirFiche = (idUtilisateur) =>
+  api.get(`/audit/utilisateurs/${idUtilisateur}`).then(data);

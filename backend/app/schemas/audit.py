@@ -85,6 +85,7 @@ class ProfilLigneOut(BaseModel):
     horaires_habituels: str
     perimetre_habituel: str
     date_calcul: datetime
+    missions: list[str] = Field(default_factory=list)
 
 
 class RessourceOut(BaseModel):
@@ -93,3 +94,28 @@ class RessourceOut(BaseModel):
     niveau_sensibilite: str
     id_service_proprietaire: int
     nb_acces: int
+
+
+class ParticipationOut(BaseModel):
+    id_participant: int
+    id_mission: int
+    titre_mission: str
+    statut_mission: str
+    type_equipe: str | None
+    numero_axe: int | None
+    fonction: str | None
+
+
+class FicheUtilisateurOut(BaseModel):
+    id_utilisateur: int
+    nom: str
+    prenom: str
+    email: str
+    matricule: str
+    statut: str
+    role: str
+    service: str
+    nb_acces: int
+    profil: ProfilLigneOut | None
+    participations: list[ParticipationOut]
+    alertes: list[AlerteOut]

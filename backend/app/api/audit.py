@@ -16,14 +16,17 @@ from app.db.base import get_db
 from app.models.analyse import ProfilComportemental, ScoreAnomalie
 from app.models.audit import JournalAcces
 from app.models.identity import Utilisateur
+from app.models.missions import Axe, Equipe, Participant
 from app.models.ressources import RessourceSensible
 from app.models.securite import AlerteSecurite, Investigation
 from app.schemas.audit import (
     AlerteOut,
     AlerteUpdate,
+    FicheUtilisateurOut,
     InvestigationCloture,
     InvestigationOut,
     JournalLigneOut,
+    ParticipationOut,
     ProfilLigneOut,
     RessourceOut,
     ResumeAudit,
@@ -91,6 +94,57 @@ def _requete_investigations(db: Session):
         .joinedload(AlerteSecurite.score)
         .joinedload(ScoreAnomalie.entree_journal)
         .joinedload(JournalAcces.utilisateur),
+    )
+
+
+# ---------- Lien avec le module Missions ----------
+
+
+def _participations_par_utilisateur(
+    db: Session, ids_utilisateurs: list[int]
+) -> dict[int, list[Participant]]:
+    """Participations aux missions des comptes donnés (via participants.id_utilisateur)."""
+    if not ids_utilisateurs:
+        return {}
+    lignes = (
+        db.query(Participant)
+        .options(joinedload(Participant.equipe).joinedload(Equipe.axe).joinedload(Axe.mission))
+        .filter(Participant.id_utilisateur.in_(ids_utilisateurs))
+        .order_by(Participant.id)
+        .all()
+    )
+    resultat: dict[int, list[Participant]] = {}
+    for ligne in lignes:
+        resultat.setdefault(ligne.id_utilisateur, []).append(ligne)
+    return resultat
+
+
+def _participation_out(p: Participant) -> ParticipationOut:
+    axe = p.equipe.axe
+    mission = axe.mission
+    return ParticipationOut(
+        id_participant=p.id,
+        id_mission=mission.id,
+        titre_mission=mission.titre,
+        statut_mission=mission.statut,
+        type_equipe=p.equipe.type_equipe,
+        numero_axe=axe.numero_axe,
+        fonction=p.fonction,
+    )
+
+
+def _profil_out(p: ProfilComportemental, participations: list[Participant]) -> ProfilLigneOut:
+    titres = sorted({part.equipe.axe.mission.titre for part in participations})
+    return ProfilLigneOut(
+        id_profil=p.id_profil,
+        id_utilisateur=p.id_utilisateur,
+        nom_utilisateur=_nom(p.utilisateur),
+        periode_reference=p.periode_reference,
+        volume_moyen=p.volume_moyen,
+        horaires_habituels=p.horaires_habituels,
+        perimetre_habituel=p.perimetre_habituel,
+        date_calcul=p.date_calcul,
+        missions=titres,
     )
 
 
@@ -318,17 +372,9 @@ def lister_profils(db: Session = Depends(get_db)):
     for p in profils:
         derniers.setdefault(p.id_utilisateur, p)
 
+    participations = _participations_par_utilisateur(db, list(derniers))
     return [
-        ProfilLigneOut(
-            id_profil=p.id_profil,
-            id_utilisateur=p.id_utilisateur,
-            nom_utilisateur=_nom(p.utilisateur),
-            periode_reference=p.periode_reference,
-            volume_moyen=p.volume_moyen,
-            horaires_habituels=p.horaires_habituels,
-            perimetre_habituel=p.perimetre_habituel,
-            date_calcul=p.date_calcul,
-        )
+        _profil_out(p, participations.get(p.id_utilisateur, []))
         for p in sorted(derniers.values(), key=lambda p: _nom(p.utilisateur))
     ]
 
@@ -351,3 +397,64 @@ def lister_ressources(db: Session = Depends(get_db)):
         )
         for r in ressources
     ]
+
+
+# ---------- Fiche d'un utilisateur (pont Missions <-> Audit) ----------
+
+
+@router.get("/utilisateurs/{id_utilisateur}", response_model=FicheUtilisateurOut)
+def fiche_utilisateur(id_utilisateur: int, db: Session = Depends(get_db)):
+    """Identité, profil comportemental, alertes et missions d'un compte.
+
+    Les missions viennent des participants liés au compte (participants.id_utilisateur).
+    """
+    utilisateur = (
+        db.query(Utilisateur)
+        .options(joinedload(Utilisateur.role), joinedload(Utilisateur.service))
+        .filter(Utilisateur.id_utilisateur == id_utilisateur)
+        .first()
+    )
+    if utilisateur is None:
+        raise HTTPException(status_code=404, detail="Utilisateur introuvable")
+
+    participations = _participations_par_utilisateur(db, [id_utilisateur]).get(id_utilisateur, [])
+
+    profil = (
+        db.query(ProfilComportemental)
+        .options(joinedload(ProfilComportemental.utilisateur))
+        .filter(ProfilComportemental.id_utilisateur == id_utilisateur)
+        .order_by(ProfilComportemental.date_calcul.desc(), ProfilComportemental.id_profil.desc())
+        .first()
+    )
+
+    alertes = (
+        db.query(AlerteSecurite)
+        .options(*_CHARGER_ALERTE)
+        .join(AlerteSecurite.score)
+        .join(ScoreAnomalie.entree_journal)
+        .filter(JournalAcces.id_utilisateur == id_utilisateur)
+        .order_by(AlerteSecurite.date_creation.desc(), AlerteSecurite.id_alerte.desc())
+        .limit(10)
+        .all()
+    )
+
+    nb_acces = (
+        db.query(func.count(JournalAcces.id_entree))
+        .filter(JournalAcces.id_utilisateur == id_utilisateur)
+        .scalar()
+    )
+
+    return FicheUtilisateurOut(
+        id_utilisateur=utilisateur.id_utilisateur,
+        nom=utilisateur.nom,
+        prenom=utilisateur.prenom,
+        email=utilisateur.email,
+        matricule=utilisateur.matricule,
+        statut=utilisateur.statut,
+        role=utilisateur.role.nom_role,
+        service=utilisateur.service.nom_service,
+        nb_acces=nb_acces,
+        profil=_profil_out(profil, participations) if profil else None,
+        participations=[_participation_out(p) for p in participations],
+        alertes=[_alerte_out(a) for a in alertes],
+    )
