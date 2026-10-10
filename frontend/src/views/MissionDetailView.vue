@@ -29,6 +29,8 @@ import {
   creerJournee,
   creerLivrable,
   creerIndicateur,
+  modifierParticipant,
+  listerUtilisateurs,
 } from "../services/missions";
 
 const route = useRoute();
@@ -40,6 +42,7 @@ const districts = ref([]);
 const indicateurs = ref([]);
 const typesParId = ref({});
 const typesActivite = ref([]);
+const utilisateurs = ref([]);
 // Formulaire ouvert à l'intérieur de la fenêtre de suivi : { type: "phase" | "journee" | "livrable", phaseId? }
 const sousFormulaire = ref(null);
 const chargement = ref(true);
@@ -81,6 +84,7 @@ function champsVides() {
     mesure: "",
     cible: "",
     realise: "",
+    utilisateurId: "",
   };
 }
 const champs = reactive(champsVides());
@@ -244,8 +248,18 @@ const titreModale = computed(() => {
       : "Suivi du district";
   }
   if (m.type === "indicateur") return "Nouvel indicateur";
+  if (m.type === "compte") return `Lier un compte à ${m.participantNom}`;
   return "";
 });
+
+async function chargerUtilisateurs() {
+  if (utilisateurs.value.length) return;
+  try {
+    utilisateurs.value = await listerUtilisateurs();
+  } catch {
+    utilisateurs.value = [];
+  }
+}
 
 function ouvrirModale(type, contexte = {}) {
   Object.assign(champs, champsVides());
@@ -256,6 +270,7 @@ function ouvrirModale(type, contexte = {}) {
     champs.numeroAxe = axesDetails.value.length + 1;
   }
   modale.value = { type, ...contexte };
+  if (type === "participant" || type === "compte") chargerUtilisateurs();
   if (type === "suivi") {
     chargerSuivi(contexte.mdId);
   }
@@ -472,9 +487,20 @@ function ajouterEquipe() {
 function ajouterParticipant() {
   return executerFormulaire(() =>
     creerParticipant({
+      id_utilisateur: champs.utilisateurId
+        ? Number(champs.utilisateurId)
+        : null,
       equipe_id: modale.value.equipeId,
       nom: champs.nomParticipant.trim(),
       fonction: champs.fonction.trim() || null,
+    })
+  );
+}
+
+function lierCompte() {
+  return executerFormulaire(() =>
+    modifierParticipant(modale.value.participantId, {
+      id_utilisateur: Number(champs.utilisateurId),
     })
   );
 }
@@ -793,6 +819,21 @@ onMounted(async () => {
                         p.fonction || "Rôle non précisé"
                       }}</small>
                     </span>
+                    <span v-if="p.id_utilisateur" class="badge badge-ok"
+                      >Compte lié</span
+                    >
+                    <button
+                      v-else-if="peutPlanifier"
+                      class="btn btn-outline btn-sm"
+                      @click="
+                        ouvrirModale('compte', {
+                          participantId: p.id,
+                          participantNom: p.nom,
+                        })
+                      "
+                    >
+                      Lier un compte
+                    </button>
                   </li>
                 </ul>
                 <p v-else class="muted">Aucun participant.</p>
@@ -919,6 +960,21 @@ onMounted(async () => {
             placeholder="ex : Technicien serveur"
           />
         </div>
+        <div class="field">
+          <label for="compte-participant"
+            >Compte utilisateur (facultatif)</label
+          >
+          <select id="compte-participant" v-model="champs.utilisateurId">
+            <option value="">Aucun compte</option>
+            <option
+              v-for="u in utilisateurs"
+              :key="u.id_utilisateur"
+              :value="u.id_utilisateur"
+            >
+              {{ u.prenom }} {{ u.nom }} ({{ u.matricule }}), {{ u.role }}
+            </option>
+          </select>
+        </div>
         <div class="modal-actions">
           <button
             type="button"
@@ -933,6 +989,43 @@ onMounted(async () => {
             :disabled="envoi"
           >
             Ajouter
+          </button>
+        </div>
+      </form>
+
+      <!-- Lier un compte à un participant existant -->
+      <form v-else-if="modale.type === 'compte'" @submit.prevent="lierCompte">
+        <p v-if="utilisateurs.length === 0" class="muted">
+          Aucun compte disponible.
+        </p>
+        <div v-else class="field">
+          <label for="compte">Compte utilisateur</label>
+          <select id="compte" v-model="champs.utilisateurId" required>
+            <option value="" disabled>Choisir un compte</option>
+            <option
+              v-for="u in utilisateurs"
+              :key="u.id_utilisateur"
+              :value="u.id_utilisateur"
+            >
+              {{ u.prenom }} {{ u.nom }} ({{ u.matricule }}), {{ u.role }}
+            </option>
+          </select>
+        </div>
+        <div class="modal-actions">
+          <button
+            type="button"
+            class="btn btn-outline btn-sm"
+            @click="fermerModale"
+          >
+            Annuler
+          </button>
+          <button
+            v-if="utilisateurs.length"
+            type="submit"
+            class="btn btn-primary btn-sm"
+            :disabled="envoi"
+          >
+            Lier le compte
           </button>
         </div>
       </form>
@@ -1366,6 +1459,10 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+.ligne-participant > :last-child {
+  margin-left: auto;
+}
+
 .barre-actions {
   display: flex;
   flex-wrap: wrap;

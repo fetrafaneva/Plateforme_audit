@@ -19,7 +19,7 @@ from app.schemas.missions import (
     PhaseCreate, PhaseOut, PhaseUpdate,
     JourneeCreate, JourneeOut, JourneeUpdate,
     LivrableCreate, LivrableOut, LivrableUpdate,
-    IndicateurPerformanceCreate, IndicateurPerformanceOut, IndicateurPerformanceUpdate,
+    IndicateurPerformanceCreate, IndicateurPerformanceOut, IndicateurPerformanceUpdate, ParticipantUpdate,
 )
 
 
@@ -389,3 +389,36 @@ def supprimer_mission(mission_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Impossible : cette mission a encore des axes ou des indicateurs")
     db.delete(mission)
     db.commit()
+
+
+@participants_router.patch(
+    "/{participant_id}",
+    response_model=ParticipantOut,
+    dependencies=[Depends(require_role("chef_mission", "administrateur"))],
+)
+def modifier_participant(participant_id: int, payload: ParticipantUpdate, db: Session = Depends(get_db)):
+    participant = db.get(Participant, participant_id)
+    if participant is None:
+        raise HTTPException(status_code=404, detail="Participant introuvable")
+
+    champs = payload.model_dump(exclude_unset=True)  # permet d'envoyer id_utilisateur: null pour délier
+    if "nom" in champs and not champs["nom"]:
+        raise HTTPException(status_code=400, detail="Le nom ne peut pas être vide")
+
+    nouveau_compte = champs.get("id_utilisateur")
+    if nouveau_compte is not None:
+        if db.get(Utilisateur, nouveau_compte) is None:
+            raise HTTPException(status_code=404, detail="Utilisateur introuvable")
+        doublon = db.query(Participant).filter(
+            Participant.equipe_id == participant.equipe_id,
+            Participant.id_utilisateur == nouveau_compte,
+            Participant.id != participant_id,
+        ).first()
+        if doublon is not None:
+            raise HTTPException(status_code=400, detail="Cet utilisateur est déjà dans cette équipe")
+
+    for champ, valeur in champs.items():
+        setattr(participant, champ, valeur)
+    db.commit()
+    db.refresh(participant)
+    return participant

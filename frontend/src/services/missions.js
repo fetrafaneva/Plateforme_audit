@@ -82,3 +82,6 @@ export const creerLivrable = (payload) =>
   api.post("/livrables/", payload).then(data);
 export const creerIndicateur = (payload) =>
   api.post("/indicateurs-performance/", payload).then(data);
+export const modifierParticipant = (id, payload) =>
+  api.patch(`/participants/${id}`, payload).then(data);
+export const listerUtilisateurs = () => api.get("/utilisateurs/").then(data);
