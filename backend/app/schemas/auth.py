@@ -1,12 +1,11 @@
-from pydantic import BaseModel, EmailStr
-
+from pydantic import BaseModel, EmailStr, Field
 
 class UserCreate(BaseModel):
     nom: str
     prenom: str
     email: EmailStr
     matricule: str
-    mot_de_passe: str
+    mot_de_passe: str = Field(min_length=8)    
     id_service: int
     id_role: int
 

@@ -10,6 +10,10 @@ const peutAuditer = computed(() =>
   ["auditeur", "administrateur"].includes(authStore.utilisateur?.role)
 );
 
+const estAdmin = computed(
+  () => authStore.utilisateur?.role === "administrateur"
+);
+
 function seDeconnecter() {
   authStore.deconnexion();
   router.push({ name: "login" });
@@ -39,6 +43,9 @@ onMounted(async () => {
         <RouterLink to="/dashboard">Tableau de bord</RouterLink>
         <RouterLink to="/missions">Missions</RouterLink>
         <RouterLink v-if="peutAuditer" to="/audit">Audit</RouterLink>
+        <RouterLink v-if="estAdmin" to="/admin/utilisateurs"
+          >Comptes</RouterLink
+        >
         <button class="btn btn-outline btn-sm" @click="seDeconnecter">
           Déconnexion
         </button>

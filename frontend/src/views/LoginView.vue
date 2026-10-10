@@ -70,10 +70,6 @@ async function seConnecter() {
           {{ chargement ? "Connexion..." : "Se connecter" }}
         </button>
       </form>
-
-      <router-link to="/register" class="lien-secondaire">
-        Pas encore de compte ? Créer un compte
-      </router-link>
     </div>
   </div>
 </template>

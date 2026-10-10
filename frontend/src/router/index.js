@@ -1,16 +1,15 @@
 import { createRouter, createWebHistory } from "vue-router";
 import { useAuthStore } from "../stores/auth";
 import LoginView from "../views/LoginView.vue";
-import RegisterView from "../views/RegisterView.vue";
 import DashboardView from "../views/DashboardView.vue";
 import MissionsView from "../views/MissionsView.vue";
 import MissionDetailView from "../views/MissionDetailView.vue";
 import AuditView from "../views/AuditView.vue";
+import AdminUtilisateursView from "../views/AdminUtilisateursView.vue";
 
 const routes = [
   { path: "/", redirect: "/dashboard" },
   { path: "/login", name: "login", component: LoginView },
-  { path: "/register", name: "register", component: RegisterView },
   {
     path: "/dashboard",
     name: "dashboard",
@@ -34,6 +33,12 @@ const routes = [
     name: "audit",
     component: AuditView,
     meta: { requiresAuth: true, roles: ["auditeur", "administrateur"] },
+  },
+  {
+    path: "/admin/utilisateurs",
+    name: "admin-utilisateurs",
+    component: AdminUtilisateursView,
+    meta: { requiresAuth: true, roles: ["administrateur"] },
   },
 ];
 
