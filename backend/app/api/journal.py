@@ -1,21 +1,16 @@
-from datetime import datetime, timezone
-
 from fastapi import APIRouter, Depends
-from sqlalchemy import asc, text
+from sqlalchemy import asc
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, require_role
 from app.core.chaining import GENESIS_HASH, compute_hash
+from app.core.journal import ajouter_entree
 from app.db.base import get_db
 from app.models.audit import JournalAcces
 from app.models.identity import Utilisateur
 from app.schemas.journal import JournalEntryCreate, JournalEntryOut, VerificationResult
 
 router = APIRouter(prefix="/journal", tags=["journal d'accès"])
-
-# Clé du verrou PostgreSQL qui sérialise l'écriture dans le journal.
-# N'importe quel entier convient, tant qu'il est le même pour toutes les écritures.
-VERROU_CHAINE = 7001
 
 
 @router.post("/acces", response_model=JournalEntryOut, status_code=201)
@@ -24,35 +19,13 @@ def enregistrer_acces(
     current_user: Utilisateur = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    # Une seule écriture à la fois peut lire « la dernière entrée » et s'y chaîner.
-    # Sans ce verrou, deux requêtes simultanées se chaîneraient à la même entrée
-    # précédente et la chaîne se diviserait. Le verrou est relâché au commit.
-    db.execute(text(f"SELECT pg_advisory_xact_lock({VERROU_CHAINE})"))
-
-    derniere_entree = (
-        db.query(JournalAcces).order_by(JournalAcces.id_entree.desc()).first()
-    )
-    hash_precedent = derniere_entree.hash_entree if derniere_entree else GENESIS_HASH
-    horodatage = datetime.now(timezone.utc)
-
-    hash_entree = compute_hash(
+    entree = ajouter_entree(
+        db,
         id_utilisateur=current_user.id_utilisateur,
         id_ressource=payload.id_ressource,
         type_action=payload.type_action,
-        horodatage=horodatage,
-        hash_precedent=hash_precedent,
-    )
-
-    entree = JournalAcces(
-        id_utilisateur=current_user.id_utilisateur,
-        id_ressource=payload.id_ressource,
-        type_action=payload.type_action,
-        horodatage=horodatage,
         adresse_ip=payload.adresse_ip,
-        hash_entree=hash_entree,
-        hash_precedent=hash_precedent,
     )
-    db.add(entree)
     db.commit()
     db.refresh(entree)
     return entree
