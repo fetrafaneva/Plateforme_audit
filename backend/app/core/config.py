@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 60
     frontend_origin: str = "http://localhost:5173"
+    uploads_dir: str = "uploads"
 
     class Config:
         env_file = ".env"

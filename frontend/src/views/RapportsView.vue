@@ -7,6 +7,7 @@ import {
   listerRapports,
   listerAxesDisponibles,
   creerRapport,
+  telechargerPdf,
 } from "../services/rapports";
 
 const router = useRouter();
@@ -17,7 +18,11 @@ const filtreStatut = ref("");
 const chargement = ref(true);
 const erreur = ref("");
 
-const peutRediger = computed(() =>
+// Seul le chef de mission rédige (pour son propre axe) ; l'administrateur valide.
+const peutRediger = computed(
+  () => authStore.utilisateur?.role === "chef_mission"
+);
+const peutPdf = computed(() =>
   ["chef_mission", "administrateur"].includes(authStore.utilisateur?.role)
 );
 
@@ -77,6 +82,15 @@ async function ouvrirModale() {
     axes.value = await listerAxesDisponibles();
   } catch (e) {
     erreurModale.value = messageErreur(e, "Impossible de charger les axes.");
+  }
+}
+
+async function pdf(rapport) {
+  erreur.value = "";
+  try {
+    await telechargerPdf(rapport.id, rapport.numero_axe ?? rapport.id_axe);
+  } catch (e) {
+    erreur.value = messageErreur(e, "Impossible de générer le PDF.");
   }
 }
 
@@ -174,6 +188,13 @@ onMounted(async () => {
                 <td>{{ r.nb_pieces }}</td>
                 <td>{{ formaterDateHeure(r.date_modification) }}</td>
                 <td class="cellule-actions">
+                  <button
+                    v-if="r.statut === 'valide' && peutPdf"
+                    class="btn btn-primary btn-sm"
+                    @click="pdf(r)"
+                  >
+                    PDF
+                  </button>
                   <RouterLink
                     :to="{ name: 'rapport-detail', params: { id: r.id } }"
                     class="btn btn-outline btn-sm"
@@ -196,7 +217,9 @@ onMounted(async () => {
       <p v-if="erreurModale" class="alert-error">{{ erreurModale }}</p>
       <form @submit.prevent="creer">
         <p v-if="axes.length === 0" class="muted">
-          Tous les axes ont déjà un rapport, ou aucun axe n'existe encore.
+          Aucun axe disponible. Tu ne peux rédiger que le rapport d'un axe dont
+          tu fais partie de l'équipe : demande que ton compte soit lié à un
+          participant de cet axe, depuis la page de la mission.
         </p>
         <div v-else class="field">
           <label for="axe">Axe à rapporter</label>
@@ -207,8 +230,8 @@ onMounted(async () => {
             </option>
           </select>
           <small class="muted">
-            Les districts, l'équipe, les dates et les indicateurs sont repris de
-            la mission.
+            Seuls les axes dont tu fais partie de l'équipe sont proposés. Les
+            districts, les dates et les indicateurs sont repris de la mission.
           </small>
         </div>
         <div class="actions-modale">
