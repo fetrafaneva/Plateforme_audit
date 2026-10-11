@@ -2,6 +2,7 @@
 import { ref, reactive, onMounted } from "vue";
 import ModalDialog from "../components/ModalDialog.vue";
 import { useAuthStore } from "../stores/auth";
+import { confirmer } from "../composables/useConfirmation";
 import {
   listerComptes,
   listerRoles,
@@ -108,12 +109,22 @@ async function soumettre() {
 
 async function basculerStatut(compte) {
   const vers = compte.statut === "actif" ? "inactif" : "actif";
-  if (
-    vers === "inactif" &&
-    !window.confirm(`Désactiver le compte de ${compte.prenom} ${compte.nom} ?`)
-  ) {
-    return;
-  }
+  const nom = `${compte.prenom} ${compte.nom}`;
+  const ok = await confirmer(
+    vers === "inactif"
+      ? {
+          titre: "Désactiver le compte",
+          message: `${nom} ne pourra plus se connecter, et sa session en cours sera refusée.`,
+          libelleConfirmer: "Désactiver",
+          danger: true,
+        }
+      : {
+          titre: "Réactiver le compte",
+          message: `${nom} pourra de nouveau se connecter.`,
+          libelleConfirmer: "Réactiver",
+        }
+  );
+  if (!ok) return;
   erreur.value = "";
   message.value = "";
   try {
