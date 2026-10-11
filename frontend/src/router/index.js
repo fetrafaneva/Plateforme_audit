@@ -6,6 +6,16 @@ import MissionsView from "../views/MissionsView.vue";
 import MissionDetailView from "../views/MissionDetailView.vue";
 import AuditView from "../views/AuditView.vue";
 import AdminUtilisateursView from "../views/AdminUtilisateursView.vue";
+import ServiceView from "../views/ServiceView.vue";
+import RapportsView from "../views/RapportsView.vue";
+import RapportDetailView from "../views/RapportDetailView.vue";
+
+const ROLES_RAPPORTS = [
+  "chef_mission",
+  "administrateur",
+  "responsable_hierarchique",
+  "auditeur",
+];
 
 const routes = [
   { path: "/", redirect: "/dashboard" },
@@ -33,6 +43,27 @@ const routes = [
     name: "audit",
     component: AuditView,
     meta: { requiresAuth: true, roles: ["auditeur", "administrateur"] },
+  },
+  {
+    path: "/rapports",
+    name: "rapports",
+    component: RapportsView,
+    meta: { requiresAuth: true, roles: ROLES_RAPPORTS },
+  },
+  {
+    path: "/rapports/:id",
+    name: "rapport-detail",
+    component: RapportDetailView,
+    meta: { requiresAuth: true, roles: ROLES_RAPPORTS },
+  },
+  {
+    path: "/service",
+    name: "service",
+    component: ServiceView,
+    meta: {
+      requiresAuth: true,
+      roles: ["responsable_hierarchique", "administrateur"],
+    },
   },
   {
     path: "/admin/utilisateurs",
