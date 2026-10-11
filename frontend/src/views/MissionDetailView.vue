@@ -3,6 +3,7 @@ import { ref, reactive, computed, onMounted } from "vue";
 import { useRoute } from "vue-router";
 import { useAuthStore } from "../stores/auth";
 import ModalDialog from "../components/ModalDialog.vue";
+import { confirmer } from "../composables/useConfirmation";
 import {
   obtenirMission,
   modifierMission,
@@ -392,23 +393,37 @@ async function executerSuivi(mdId, action) {
   }
 }
 
-function changerStatutPhase(mdId, phase, vers) {
+async function changerStatutPhase(mdId, phase, vers) {
+  if (!(await confirmerStatut("La phase", phase.libelle, vers))) return;
   return executerSuivi(mdId, () => modifierPhase(phase.id, { statut: vers }));
 }
 
-function changerStatutJournee(mdId, journee, vers) {
+async function changerStatutJournee(mdId, journee, vers) {
+  if (
+    !(await confirmerStatut(
+      "La journée",
+      `jour ${journee.numero_jour ?? "–"}`,
+      vers
+    ))
+  )
+    return;
   return executerSuivi(mdId, () =>
     modifierJournee(journee.id, { statut: vers })
   );
 }
 
-function signerLivrable(mdId, livrable) {
-  return executerSuivi(mdId, () =>
-    modifierLivrable(livrable.id, { signe: true })
-  );
+async function signerLivrable(mdId, livrable) {
+  const ok = await confirmer({
+    titre: "Marquer le livrable signé",
+    message: `« ${livrable.type_livrable || "Livrable"} » sera marqué comme signé. Cette action ne peut pas être annulée depuis l'interface.`,
+    libelleConfirmer: "Marquer signé",
+  });
+  if (!ok) return;
+  return executerSuivi(mdId, () => modifierLivrable(livrable.id, { signe: true }));
 }
 
 async function changerStatutDistrict(md, vers) {
+  if (!(await confirmerStatut("Le district", md.nom, vers))) return;
   erreurModale.value = "";
   envoi.value = true;
   try {
@@ -596,9 +611,34 @@ function ajouterIndicateur() {
   );
 }
 
+const LIBELLES_STATUT = {
+  planifiee: "planifiée",
+  en_cours: "en cours",
+  terminee: "terminée",
+  annulee: "annulée",
+  a_planifier: "à planifier",
+  planifie: "planifié",
+  termine: "terminé",
+  a_faire: "à faire",
+  prevue: "prévue",
+  realisee: "réalisée",
+};
+
+function confirmerStatut(objet, nom, vers) {
+  return confirmer({
+    titre: "Changer le statut",
+    message: `${objet} « ${nom} » passera au statut « ${
+      LIBELLES_STATUT[vers] ?? vers
+    } ».`,
+    libelleConfirmer: "Confirmer",
+    danger: vers === "annulee",
+  });
+}
+
 // ---------- Actions sur la mission ----------
 
 async function changerStatutMission(vers) {
+  if (!(await confirmerStatut("La mission", mission.value.titre, vers))) return;
   erreurAction.value = "";
   envoi.value = true;
   try {

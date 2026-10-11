@@ -1,6 +1,7 @@
 <script setup>
 import { ref, onMounted } from "vue";
 import ModalDialog from "../components/ModalDialog.vue";
+import { confirmer } from "../composables/useConfirmation";
 import {
   obtenirResume,
   verifierIntegrite,
@@ -231,6 +232,12 @@ async function verifier() {
 }
 
 async function ouvrirEnquete(alerte) {
+  const ok = await confirmer({
+    titre: "Ouvrir une investigation",
+    message: `Une enquête sera ouverte à ton nom sur l'alerte ${alerte.niveau_gravite} concernant ${alerte.nom_utilisateur}.`,
+    libelleConfirmer: "Ouvrir l'enquête",
+  });
+  if (!ok) return;
   message.value = "";
   erreur.value = "";
   envoi.value = true;
@@ -247,6 +254,13 @@ async function ouvrirEnquete(alerte) {
 }
 
 async function marquerFausseAlerte(alerte) {
+  const ok = await confirmer({
+    titre: "Classer en fausse alerte",
+    message: `L'alerte ${alerte.niveau_gravite} concernant ${alerte.nom_utilisateur} sera écartée : elle ne comptera plus dans le score de risque de son service.`,
+    libelleConfirmer: "Classer en fausse alerte",
+    danger: true,
+  });
+  if (!ok) return;
   message.value = "";
   erreur.value = "";
   envoi.value = true;
