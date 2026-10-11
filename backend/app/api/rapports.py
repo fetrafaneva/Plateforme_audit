@@ -2,9 +2,11 @@
 soumission et validation.
 
 Droits :
-- rédiger, déposer des pièces, soumettre : chef_mission (ses propres rapports) et administrateur ;
-- lire : chef_mission (ses rapports seulement), administrateur, responsable_hierarchique, auditeur ;
-- valider ou demander une correction : administrateur, jamais sur son propre rapport.
+- rédiger, déposer des pièces, soumettre : chef_mission uniquement, pour l'axe dont il fait
+  partie de l'équipe (participant lié à son compte) et seulement sur ses propres rapports ;
+- valider ou demander une correction : administrateur uniquement (il ne rédige jamais) ;
+- lire : chef_mission (ses rapports), administrateur, responsable_hierarchique, auditeur ;
+- télécharger le PDF, une fois le rapport validé : l'auteur et l'administrateur.
 
 Traçabilité : les consultations, les soumissions/validations, les dépôts de fiches et les
 téléchargements de documents sont écrits dans le journal d'accès chaîné (ressource
@@ -18,13 +20,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse
-from sqlalchemy import func
+from fastapi.responses import FileResponse, Response
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.api.deps import get_current_user, require_role
 from app.core.config import settings
 from app.core.journal import ajouter_entree, obtenir_id_ressource
+from app.core.pdf_rapport import construire_pdf
 from app.db.base import get_db
 from app.models.identity import Utilisateur
 from app.models.missions import (
@@ -57,7 +60,7 @@ from app.schemas.rapports import (
 
 router = APIRouter(prefix="/rapports", tags=["rapports de mission"])
 
-ROLES_REDACTION = ("chef_mission", "administrateur")
+ROLES_REDACTION = ("chef_mission",)  # l'administrateur valide, il ne rédige pas
 ROLES_LECTURE = ("chef_mission", "administrateur", "responsable_hierarchique", "auditeur")
 STATUTS_MODIFIABLES = ("brouillon", "a_corriger")
 RESSOURCE_RAPPORTS = "Rapports de mission"
@@ -153,6 +156,17 @@ def _verifier_edition(rapport: RapportMission, user: Utilisateur) -> None:
             status_code=400,
             detail=f"Le rapport est « {rapport.statut} » : il n'est plus modifiable",
         )
+
+
+def _est_membre_axe(db: Session, user: Utilisateur, axe_id: int) -> bool:
+    """L'utilisateur est-il lié (via un participant) à une équipe de cet axe ?"""
+    return (
+        db.query(Participant.id)
+        .join(Equipe, Participant.equipe_id == Equipe.id)
+        .filter(Equipe.axe_id == axe_id, Participant.id_utilisateur == user.id_utilisateur)
+        .first()
+        is not None
+    )
 
 
 def _nombre(valeur: str | None) -> float | None:
@@ -321,17 +335,19 @@ def _detail(db: Session, rapport: RapportMission, user: Utilisateur) -> RapportD
     role = _role(user)
     est_auteur = rapport.id_auteur == user.id_utilisateur
     modifiable = (
-        role in ROLES_REDACTION
-        and (role == "administrateur" or est_auteur)
-        and rapport.statut in STATUTS_MODIFIABLES
+        role in ROLES_REDACTION and est_auteur and rapport.statut in STATUTS_MODIFIABLES
     )
     peut_valider = role == "administrateur" and rapport.statut == "soumis" and not est_auteur
+    peut_telecharger_pdf = rapport.statut == "valide" and (
+        role == "administrateur" or (role == "chef_mission" and est_auteur)
+    )
 
     return RapportDetailOut(
         id=rapport.id,
         statut=rapport.statut,
         modifiable=modifiable,
         peut_valider=peut_valider,
+        peut_telecharger_pdf=peut_telecharger_pdf,
         id_axe=axe.id,
         numero_axe=axe.numero_axe,
         id_mission=mission.id,
@@ -373,13 +389,21 @@ def _detail(db: Session, rapport: RapportMission, user: Utilisateur) -> RapportD
     response_model=list[AxeDisponibleOut],
     dependencies=[Depends(require_role(*ROLES_REDACTION))],
 )
-def axes_disponibles(db: Session = Depends(get_db)):
-    """Axes qui n'ont pas encore de rapport."""
+def axes_disponibles(
+    current_user: Utilisateur = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Axes sans rapport dont le chef de mission fait partie de l'équipe."""
+    ses_axes = (
+        select(Equipe.axe_id)
+        .join(Participant, Participant.equipe_id == Equipe.id)
+        .where(Participant.id_utilisateur == current_user.id_utilisateur)
+    )
     axes = (
         db.query(Axe)
         .options(joinedload(Axe.mission))
         .outerjoin(RapportMission, RapportMission.axe_id == Axe.id)
-        .filter(RapportMission.id.is_(None))
+        .filter(RapportMission.id.is_(None), Axe.id.in_(ses_axes))
         .order_by(Axe.mission_id.desc(), Axe.numero_axe)
         .all()
     )
@@ -447,6 +471,14 @@ def creer_rapport(
     axe = db.get(Axe, payload.axe_id)
     if axe is None:
         raise HTTPException(status_code=404, detail="Axe introuvable")
+    if not _est_membre_axe(db, current_user, axe.id):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Tu ne peux rédiger que le rapport d'un axe dont tu fais partie de l'équipe. "
+                "Ton compte doit être lié à un participant de cet axe."
+            ),
+        )
     if db.query(RapportMission).filter(RapportMission.axe_id == axe.id).first():
         raise HTTPException(status_code=400, detail="Un rapport existe déjà pour cet axe")
 
@@ -771,3 +803,77 @@ def demander_correction(
     _journaliser(db, current_user, "modification", request)
     db.commit()
     return _detail(db, _charger(db, id_rapport), current_user)
+
+
+# ---------------------------------------------------------------------------
+# PDF du rapport validé
+# ---------------------------------------------------------------------------
+
+
+def _donnees_pdf(db: Session, rapport: RapportMission, detail: RapportDetailOut) -> dict:
+    """Données du rapport au format attendu par app.core.pdf_rapport.construire_pdf."""
+    donnees = detail.model_dump()
+
+    ids_districts = [d.id_mission_district for d in detail.districts]
+    journees: dict[int, list[dict]] = {i: [] for i in ids_districts}
+    if ids_districts:
+        lignes = (
+            db.query(Journee)
+            .filter(Journee.mission_district_id.in_(ids_districts))
+            .order_by(Journee.mission_district_id, Journee.date, Journee.numero_jour)
+            .all()
+        )
+        for j in lignes:
+            journees[j.mission_district_id].append(
+                {"numero_jour": j.numero_jour, "date": j.date, "lieu": j.lieu, "statut": j.statut}
+            )
+    donnees["journees"] = journees
+
+    pieces_par_id = {p.id: p for p in rapport.pieces}
+    for piece in donnees["pieces"]:
+        piece["chemin"] = None
+        if piece["type_piece"] == "photo":
+            try:
+                chemin = _chemin_piece(pieces_par_id[piece["id"]])
+                piece["chemin"] = chemin if chemin.is_file() else None
+            except HTTPException:
+                pass  # fichier introuvable : le PDF mentionnera « Image non disponible »
+
+    donnees["service_auteur"] = rapport.auteur.service.nom_service
+    return donnees
+
+
+@router.get(
+    "/{id_rapport}/pdf",
+    dependencies=[Depends(require_role("chef_mission", "administrateur"))],
+)
+def telecharger_pdf(
+    id_rapport: int,
+    request: Request,
+    current_user: Utilisateur = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """PDF du rapport, disponible seulement une fois validé (auteur et administrateur)."""
+    rapport = _charger(db, id_rapport)
+    _verifier_lecture(rapport, current_user)
+    if rapport.statut != "valide":
+        raise HTTPException(
+            status_code=400,
+            detail="Le PDF n'est disponible qu'après validation du rapport par l'administrateur",
+        )
+
+    detail = _detail(db, rapport, current_user)
+    contenu = construire_pdf(_donnees_pdf(db, rapport, detail))
+
+    _journaliser(db, current_user, "export", request)
+    db.commit()
+
+    numero = rapport.axe.numero_axe if rapport.axe.numero_axe is not None else rapport.axe_id
+    return Response(
+        content=contenu,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="rapport_mission_axe{numero}_{rapport.id}.pdf"',
+            "X-Content-Type-Options": "nosniff",
+        },
+    )

@@ -1,10 +1,13 @@
 """Crée un rapport de démonstration (brouillon) pré-rempli d'après un vrai rapport.
 
 Usage (depuis le dossier backend, venv activé) :
-    python -m scripts.seed_rapport
+    python -m scripts.seed_rapport                  # premier chef de mission trouvé
+    python -m scripts.seed_rapport adresse@mail.mg  # ou un chef de mission précis
 
-Le rapport est créé au nom de chef@test.mg pour l'axe 4 de la première mission
-(ou son premier axe). Il n'a AUCUNE pièce jointe : la liste des pièces
+Règles de l'application : seul un chef de mission rédige, et seulement pour un axe
+dont il fait partie de l'équipe. Le script les respecte : il choisit l'axe 4 de la
+première mission (ou son premier axe) et, si le chef n'est pas encore lié à cet axe,
+il l'ajoute comme participant (avec une équipe si l'axe n'en a pas). Il n'a AUCUNE pièce jointe : la liste des pièces
 requises s'affiche donc entièrement « manquante », ce qui permet de montrer
 le contrôle avant soumission. Ne supprime rien ; relançable (ignore si le
 rapport existe déjà).
@@ -14,8 +17,8 @@ import sys
 
 import app.models  # noqa: F401  (enregistre tous les modèles)
 from app.db.base import SessionLocal, engine
-from app.models.identity import Utilisateur
-from app.models.missions import Axe
+from app.models.identity import Role, Utilisateur
+from app.models.missions import Axe, Equipe, Participant
 from app.models.rapports import RapportDifficulte, RapportMission
 
 BASE_ATTENDUE = "audit_comportemental"
@@ -27,17 +30,53 @@ def main() -> None:
 
     db = SessionLocal()
     try:
-        chef = db.query(Utilisateur).filter(Utilisateur.email == "chef@test.mg").first()
-        if chef is None:
-            sys.exit("Compte chef@test.mg introuvable : lance d'abord seed_demo.py.")
+        requete = (
+            db.query(Utilisateur)
+            .join(Role, Role.id_role == Utilisateur.id_role)
+            .filter(Role.nom_role == "chef_mission", Utilisateur.statut == "actif")
+        )
+        if len(sys.argv) > 1:
+            chef = requete.filter(Utilisateur.email == sys.argv[1]).first()
+            if chef is None:
+                sys.exit(f"{sys.argv[1]} n'est pas un chef de mission actif.")
+        else:
+            chef = requete.order_by(Utilisateur.id_utilisateur).first()
+            if chef is None:
+                sys.exit("Aucun chef de mission actif : crée ce compte depuis la page « Comptes ».")
+        print(f"Auteur du rapport : {chef.prenom} {chef.nom} ({chef.email})")
 
         axes = db.query(Axe).order_by(Axe.mission_id, Axe.numero_axe).all()
         if not axes:
-            sys.exit("Aucun axe en base : lance d'abord seed_demo.py.")
+            sys.exit("Aucun axe en base : crée une mission et un axe depuis la page Missions.")
         axe = next((a for a in axes if a.numero_axe == 4), axes[0])
 
         if db.query(RapportMission).filter(RapportMission.axe_id == axe.id).first():
             sys.exit(f"Un rapport existe déjà pour l'axe {axe.id} : rien à faire.")
+
+        # Le chef doit faire partie de l'équipe de l'axe pour pouvoir le rapporter.
+        membre = (
+            db.query(Participant.id)
+            .join(Equipe, Participant.equipe_id == Equipe.id)
+            .filter(Equipe.axe_id == axe.id, Participant.id_utilisateur == chef.id_utilisateur)
+            .first()
+        )
+        if membre is None:
+            equipe = db.query(Equipe).filter(Equipe.axe_id == axe.id).order_by(Equipe.id).first()
+            if equipe is None:
+                equipe = Equipe(axe_id=axe.id, type_equipe="Équipe de mission")
+                db.add(equipe)
+                db.flush()
+                print("Équipe créée pour l'axe (il n'en avait pas).")
+            db.add(
+                Participant(
+                    equipe_id=equipe.id,
+                    nom=f"{chef.prenom} {chef.nom}",
+                    fonction="Chef d'équipe",
+                    id_utilisateur=chef.id_utilisateur,
+                )
+            )
+            db.flush()
+            print("Compte lié à l'équipe de l'axe (participant ajouté).")
 
         rapport = RapportMission(
             axe_id=axe.id,

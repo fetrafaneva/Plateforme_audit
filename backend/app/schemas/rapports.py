@@ -120,6 +120,7 @@ class RapportDetailOut(BaseModel):
     statut: str
     modifiable: bool
     peut_valider: bool
+    peut_telecharger_pdf: bool
 
     id_axe: int
     numero_axe: int | None

@@ -12,6 +12,7 @@ import {
   soumettreRapport,
   validerRapport,
   demanderCorrection,
+  telechargerPdf,
 } from "../services/rapports";
 
 const route = useRoute();
@@ -278,6 +279,18 @@ function retirerDifficulte(index) {
   difficultes.value.splice(index, 1);
 }
 
+async function telechargerLePdf() {
+  erreur.value = "";
+  try {
+    await telechargerPdf(
+      rapport.value.id,
+      rapport.value.numero_axe ?? rapport.value.id_axe
+    );
+  } catch (e) {
+    erreur.value = messageErreur(e, "Impossible de générer le PDF.");
+  }
+}
+
 onMounted(async () => {
   if (!authStore.utilisateur) {
     try {
@@ -347,6 +360,13 @@ onMounted(async () => {
                 : `${manquants} pièce(s) et ${rapport.completude.sections_manquantes.length} section(s) manquantes`
             }}
           </span>
+          <button
+            v-if="rapport.peut_telecharger_pdf"
+            class="btn btn-primary btn-sm"
+            @click="telechargerLePdf"
+          >
+            Télécharger le PDF
+          </button>
           <template v-if="rapport.modifiable">
             <button
               class="btn btn-outline btn-sm"

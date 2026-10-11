@@ -36,3 +36,29 @@ export const validerRapport = (id) =>
   api.post(`/rapports/${id}/valider`).then(data);
 export const demanderCorrection = (id, commentaire) =>
   api.post(`/rapports/${id}/demander-correction`, { commentaire }).then(data);
+
+// PDF d'un rapport validé. Le fichier est récupéré avec le jeton d'accès puis
+// enregistré par le navigateur. En cas d'erreur, la réponse (un JSON) arrive
+// sous forme de blob : on la relit pour que l'appelant puisse afficher le message.
+export async function telechargerPdf(id, numeroAxe) {
+  try {
+    const blob = await api
+      .get(`/rapports/${id}/pdf`, { responseType: "blob" })
+      .then(data);
+    const url = URL.createObjectURL(blob);
+    const lien = document.createElement("a");
+    lien.href = url;
+    lien.download = `rapport_mission_axe${numeroAxe}_${id}.pdf`;
+    lien.click();
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    if (e.response?.data instanceof Blob) {
+      try {
+        e.response.data = JSON.parse(await e.response.data.text());
+      } catch {
+        /* réponse non JSON : on garde l'erreur telle quelle */
+      }
+    }
+    throw e;
+  }
+}
