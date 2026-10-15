@@ -10,6 +10,9 @@ from app.api.audit import router as audit_router
 from app.api.utilisateurs import router as utilisateurs_router
 from app.api.service import router as service_router
 from app.api.rapports import router as rapports_router
+from app.api.notifications import router as notifications_router
+from app.api.referentiels import router as referentiels_router
+
 from app.api.missions import (
     router as missions_router,
     axes_router,
@@ -60,7 +63,8 @@ app.include_router(audit_router)
 app.include_router(utilisateurs_router)
 app.include_router(service_router)
 app.include_router(rapports_router)
-
+app.include_router(notifications_router)
+app.include_router(referentiels_router)
 
 @app.get("/health")
 def health_check():
