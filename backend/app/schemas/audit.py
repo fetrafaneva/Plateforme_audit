@@ -119,3 +119,18 @@ class FicheUtilisateurOut(BaseModel):
     profil: ProfilLigneOut | None
     participations: list[ParticipationOut]
     alertes: list[AlerteOut]
+
+
+class PieceAnomalieOut(BaseModel):
+    id_piece: int
+    id_rapport: int
+    nom_original: str
+    type_piece: str
+
+
+class VerificationPiecesOut(BaseModel):
+    intact: bool
+    nb_verifiees: int
+    manquantes: list[PieceAnomalieOut]
+    alterees: list[PieceAnomalieOut]
+    orphelins: list[str]

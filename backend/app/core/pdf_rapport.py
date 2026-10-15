@@ -29,6 +29,7 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
 from reportlab.platypus import (
+    CondPageBreak,
     HRFlowable,
     Image,
     KeepTogether,
@@ -413,22 +414,40 @@ def construire_pdf(d: dict) -> bytes:
         journees = d.get("journees", {}).get(district["id_mission_district"], [])
         bloc = [Paragraph(f"<b>Chronogramme réalisé à {_p(district['nom'])} :</b>", S["texte"])]
         if journees:
-            lignes = [[Paragraph(f"<b>{t}</b>", S["cellule"]) for t in ("Jour", "Date", "Lieu / Établissement", "Statut")]]
+            lignes = [
+                [
+                    Paragraph(f"<b>{t}</b>", S["cellule"])
+                    for t in (
+                        "Date", "Lieu / Établissement", "Activités planifiées",
+                        "Activités réellement réalisées", "Écart / Justification",
+                    )
+                ]
+            ]
             for j in journees:
+                date_txt = _date_courte(j.get("date"))
+                if j.get("statut") not in (None, "realisee"):
+                    etat = LIBELLES_JOURNEE.get(j["statut"], j["statut"]).lower()
+                    date_txt += f"\n({etat})"
                 lignes.append(
                     [
-                        Paragraph(_p(j.get("numero_jour") if j.get("numero_jour") is not None else "—"), S["cellule"]),
-                        Paragraph(_p(_date_courte(j.get("date"))), S["cellule"]),
+                        Paragraph(_p(date_txt), S["cellule"]),
                         Paragraph(_p(j.get("lieu") or "—"), S["cellule"]),
-                        Paragraph(_p(LIBELLES_JOURNEE.get(j.get("statut"), j.get("statut") or "—")), S["cellule"]),
+                        Paragraph(_p(j.get("activites_prevues") or "—"), S["cellule"]),
+                        Paragraph(_p(j.get("activites_realisees") or "—"), S["cellule"]),
+                        Paragraph(_p(j.get("ecart") or "—"), S["cellule"]),
                     ]
                 )
-            bloc.append(_tableau(lignes, [1.6 * cm, 2.6 * cm, largeur_page - 7.6 * cm, 3.4 * cm]))
+            reste = largeur_page - 2.3 * cm - 2.7 * cm
+            bloc.append(
+                _tableau(lignes, [2.3 * cm, 2.7 * cm, reste / 3, reste / 3, reste / 3])
+            )
         else:
             bloc.append(Paragraph("<i>Aucune journée enregistrée pour ce district.</i>", S["vide"]))
         bloc.append(Spacer(1, 6))
-        story.append(KeepTogether(bloc[:2]))
-        story += bloc[2:]
+        # Le tableau peut se couper entre deux pages (en-tête répété) ; on évite seulement
+        # de laisser le titre seul tout en bas.
+        story.append(CondPageBreak(4 * cm))
+        story += bloc
 
     story += _titre("3.2. Travaux techniques réalisés", S, 2)
     for etiquette, cle in (

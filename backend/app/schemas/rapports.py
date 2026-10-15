@@ -1,4 +1,5 @@
 from datetime import date, datetime
+from datetime import date as date_type  # évite le conflit avec un champ nommé « date »
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -18,6 +19,35 @@ class DifficulteIn(BaseModel):
 
 class DifficulteOut(DifficulteIn):
     id: int
+
+
+class JourneeRapportOut(BaseModel):
+    """Une journée du chronogramme, avec les trois colonnes propres au rapport."""
+
+    id_journee: int
+    id_mission_district: int
+    nom_district: str
+    numero_jour: int | None
+    date: date_type | None
+    lieu: str | None
+    statut: str
+    activites_prevues: str | None
+    activites_realisees: str | None
+    ecart: str | None
+
+
+class ChronoLigneIn(BaseModel):
+    id_journee: int
+    activites_prevues: str | None = Field(default=None, max_length=2000)
+    activites_realisees: str | None = Field(default=None, max_length=2000)
+    ecart: str | None = Field(default=None, max_length=2000)
+
+
+class CompteursRapportsOut(BaseModel):
+    brouillon: int
+    soumis: int
+    a_corriger: int
+    valide: int
 
 
 class RapportCreate(BaseModel):
@@ -131,6 +161,7 @@ class RapportDetailOut(BaseModel):
     periode_fin: date | None
     districts: list[DistrictRapportOut]
     membres: list[MembreOut]
+    journees: list[JourneeRapportOut]
     resultats: list[ResultatOut]
 
     id_auteur: int
