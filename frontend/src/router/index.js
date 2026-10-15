@@ -7,6 +7,8 @@ import MissionDetailView from "../views/MissionDetailView.vue";
 import AuditView from "../views/AuditView.vue";
 import AdminUtilisateursView from "../views/AdminUtilisateursView.vue";
 import ServiceView from "../views/ServiceView.vue";
+import AdminReferentielsView from "../views/AdminReferentielsView.vue";
+import NotFoundView from "../views/NotFoundView.vue";
 import RapportsView from "../views/RapportsView.vue";
 import RapportDetailView from "../views/RapportDetailView.vue";
 
@@ -57,6 +59,12 @@ const routes = [
     meta: { requiresAuth: true, roles: ROLES_RAPPORTS },
   },
   {
+    path: "/admin/referentiels",
+    name: "admin-referentiels",
+    component: AdminReferentielsView,
+    meta: { requiresAuth: true, roles: ["administrateur"] },
+  },
+  {
     path: "/service",
     name: "service",
     component: ServiceView,
@@ -71,6 +79,8 @@ const routes = [
     component: AdminUtilisateursView,
     meta: { requiresAuth: true, roles: ["administrateur"] },
   },
+  // Doit rester la dernière route : toute adresse inconnue arrive ici.
+  { path: "/:pathMatch(.*)*", name: "introuvable", component: NotFoundView },
 ];
 
 const router = createRouter({

@@ -2,6 +2,7 @@
 import { ref, computed, onMounted } from "vue";
 import { useAuthStore } from "../stores/auth";
 import { listerMissions } from "../services/missions";
+import RapportsCompteurs from "../components/RapportsCompteurs.vue";
 
 const authStore = useAuthStore();
 const missions = ref([]);
@@ -62,6 +63,7 @@ function classeStatut(statut) {
     </header>
 
     <main class="container page">
+      <RapportsCompteurs />
       <section class="stats">
         <div class="card card-hover stat">
           <span class="stat-valeur">{{

@@ -33,3 +33,6 @@ export const listerRessources = () => api.get("/audit/ressources").then(data);
 // Fiche d'un utilisateur : profil, alertes et missions (lien avec le module Missions)
 export const obtenirFiche = (idUtilisateur) =>
   api.get(`/audit/utilisateurs/${idUtilisateur}`).then(data);
+
+// Intégrité des pièces jointes des rapports (fichiers présents et non modifiés)
+export const verifierPieces = () => api.get("/audit/pieces/verify").then(data);

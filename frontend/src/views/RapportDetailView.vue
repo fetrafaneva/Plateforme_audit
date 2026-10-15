@@ -13,6 +13,7 @@ import {
   validerRapport,
   demanderCorrection,
   telechargerPdf,
+  remplacerChronogramme,
 } from "../services/rapports";
 
 const route = useRoute();
@@ -22,6 +23,7 @@ const idRapport = route.params.id;
 const rapport = ref(null);
 const form = reactive({});
 const difficultes = ref([]);
+const chrono = ref([]); // une ligne par journée de l'axe
 const chargement = ref(true);
 const erreur = ref("");
 const message = ref("");
@@ -32,20 +34,10 @@ const commentaire = ref("");
 const erreurModale = ref("");
 
 const CHAMPS_TEXTE = [
-  "contexte",
-  "justification",
-  "itineraire_reel",
-  "inventaire_materiel",
-  "configuration_technique",
-  "tests_securite",
-  "profil_participants",
-  "themes_formation",
-  "evaluation_formation",
-  "points_forts",
-  "lecons_apprises",
-  "bonnes_pratiques",
-  "conclusion",
-  "recommandations",
+  "contexte", "justification", "itineraire_reel", "inventaire_materiel",
+  "configuration_technique", "tests_securite", "profil_participants",
+  "themes_formation", "evaluation_formation", "points_forts", "lecons_apprises",
+  "bonnes_pratiques", "conclusion", "recommandations",
 ];
 
 // Sections du rapport, dans l'ordre de ton modèle de rapport.
@@ -58,44 +50,25 @@ const SECTIONS_REDACTION = [
     ],
   },
   {
-    titre: "3.1 Itinéraire suivi",
+    titre: "3.1 Itinéraire suivi et chronogramme",
+    chrono: true,
     champs: [{ cle: "itineraire_reel", label: "Itinéraire réel", lignes: 2 }],
   },
   {
     titre: "3.2 Travaux techniques réalisés",
     champs: [
-      {
-        cle: "inventaire_materiel",
-        label: "Inventaire du matériel reçu et installé",
-        lignes: 3,
-      },
-      {
-        cle: "configuration_technique",
-        label: "Configuration technique",
-        lignes: 4,
-      },
-      {
-        cle: "tests_securite",
-        label: "Tests de connectivité et de sécurité",
-        lignes: 3,
-      },
+      { cle: "inventaire_materiel", label: "Inventaire du matériel reçu et installé", lignes: 3 },
+      { cle: "configuration_technique", label: "Configuration technique", lignes: 4 },
+      { cle: "tests_securite", label: "Tests de connectivité et de sécurité", lignes: 3 },
     ],
   },
   {
     titre: "3.3 Renforcement de capacités",
     champs: [
       { cle: "nb", label: "Nombre de participants formés", type: "nombre" },
-      {
-        cle: "profil_participants",
-        label: "Profil des participants",
-        type: "ligne",
-      },
+      { cle: "profil_participants", label: "Profil des participants", type: "ligne" },
       { cle: "themes_formation", label: "Thèmes abordés", lignes: 4 },
-      {
-        cle: "evaluation_formation",
-        label: "Évaluation de la formation",
-        lignes: 4,
-      },
+      { cle: "evaluation_formation", label: "Évaluation de la formation", lignes: 4 },
     ],
   },
 ];
@@ -113,11 +86,7 @@ const SECTIONS_BILAN = [
     titre: "7. Conclusion et recommandations",
     champs: [
       { cle: "conclusion", label: "Conclusion générale *", lignes: 5 },
-      {
-        cle: "recommandations",
-        label: "Recommandations (une par ligne)",
-        lignes: 5,
-      },
+      { cle: "recommandations", label: "Recommandations (une par ligne)", lignes: 5 },
     ],
   },
 ];
@@ -130,9 +99,7 @@ const LIBELLES_STATUT = {
 };
 
 const manquants = computed(() =>
-  rapport.value
-    ? rapport.value.completude.elements.filter((e) => !e.ok).length
-    : 0
+  rapport.value ? rapport.value.completude.elements.filter((e) => !e.ok).length : 0
 );
 
 function classeStatut(statut) {
@@ -148,18 +115,14 @@ function formaterDate(d) {
 
 function formaterDateHeure(d) {
   return d
-    ? new Date(d).toLocaleString("fr-FR", {
-        dateStyle: "short",
-        timeStyle: "short",
-      })
+    ? new Date(d).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" })
     : "—";
 }
 
 function messageErreur(e, defaut = "L'opération a échoué.") {
   const detail = e.response?.data?.detail;
   if (typeof detail === "string") return detail;
-  if (Array.isArray(detail) && detail.length)
-    return detail.map((d) => d.msg).join(" ; ");
+  if (Array.isArray(detail) && detail.length) return detail.map((d) => d.msg).join(" ; ");
   return defaut;
 }
 
@@ -170,6 +133,12 @@ function remplir(r) {
     categorie: d.categorie,
     description: d.description,
     solution: d.solution ?? "",
+  }));
+  chrono.value = r.journees.map((j) => ({
+    ...j,
+    activites_prevues: j.activites_prevues ?? "",
+    activites_realisees: j.activites_realisees ?? "",
+    ecart: j.ecart ?? "",
   }));
 }
 
@@ -188,9 +157,7 @@ async function charger(remplirFormulaire = true) {
 }
 
 async function enregistrer() {
-  const payload = Object.fromEntries(
-    CHAMPS_TEXTE.map((cle) => [cle, form[cle]])
-  );
+  const payload = Object.fromEntries(CHAMPS_TEXTE.map((cle) => [cle, form[cle]]));
   payload.nb_participants_formes = form.nb === "" ? null : Number(form.nb);
   await modifierRapport(idRapport, payload);
   await remplacerDifficultes(
@@ -203,6 +170,17 @@ async function enregistrer() {
         solution: d.solution.trim() || null,
       }))
   );
+  if (chrono.value.length) {
+    await remplacerChronogramme(
+      idRapport,
+      chrono.value.map((j) => ({
+        id_journee: j.id_journee,
+        activites_prevues: j.activites_prevues,
+        activites_realisees: j.activites_realisees,
+        ecart: j.ecart,
+      }))
+    );
+  }
 }
 
 async function executer(action, texteSucces) {
@@ -242,8 +220,7 @@ async function soumettre() {
 async function valider() {
   const ok = await confirmer({
     titre: "Valider le rapport",
-    message:
-      "Le rapport sera marqué comme validé et ne pourra plus être modifié.",
+    message: "Le rapport sera marqué comme validé et ne pourra plus être modifié.",
     libelleConfirmer: "Valider",
   });
   if (!ok) return;
@@ -279,13 +256,23 @@ function retirerDifficulte(index) {
   difficultes.value.splice(index, 1);
 }
 
+function chronoDe(idMissionDistrict) {
+  return chrono.value.filter((j) => j.id_mission_district === idMissionDistrict);
+}
+
+// Les dates des journées n'ont pas d'heure : on évite le décalage de fuseau.
+function dateSimple(d) {
+  if (!d) return "date à définir";
+  const [annee, mois, jour] = String(d).slice(0, 10).split("-");
+  return `${jour}/${mois}/${annee}`;
+}
+
+const LIBELLES_JOURNEE = { prevue: "Prévue", realisee: "Réalisée", annulee: "Annulée" };
+
 async function telechargerLePdf() {
   erreur.value = "";
   try {
-    await telechargerPdf(
-      rapport.value.id,
-      rapport.value.numero_axe ?? rapport.value.id_axe
-    );
+    await telechargerPdf(rapport.value.id, rapport.value.numero_axe ?? rapport.value.id_axe);
   } catch (e) {
     erreur.value = messageErreur(e, "Impossible de générer le PDF.");
   }
@@ -307,21 +294,15 @@ onMounted(async () => {
   <div>
     <header class="hero hero-compact">
       <div class="container">
-        <RouterLink class="back" to="/rapports"
-          >&larr; Retour aux rapports</RouterLink
-        >
+        <RouterLink class="back" to="/rapports">&larr; Retour aux rapports</RouterLink>
         <h1>
           Rapport de mission
-          <template v-if="rapport"
-            >, axe {{ rapport.numero_axe ?? rapport.id_axe }}</template
-          >
+          <template v-if="rapport">, axe {{ rapport.numero_axe ?? rapport.id_axe }}</template>
         </h1>
         <p v-if="rapport" class="hero-meta">
           <span>{{ rapport.titre_mission }}</span>
           <span>· rédigé par {{ rapport.auteur }}</span>
-          <span class="badge badge-light">{{
-            LIBELLES_STATUT[rapport.statut]
-          }}</span>
+          <span class="badge badge-light">{{ LIBELLES_STATUT[rapport.statut] }}</span>
         </p>
       </div>
     </header>
@@ -334,14 +315,11 @@ onMounted(async () => {
       <template v-else-if="rapport">
         <!-- Bandeaux de situation -->
         <p v-if="rapport.statut === 'a_corriger'" class="bandeau bandeau-warn">
-          <strong
-            >Correction demandée par {{ rapport.nom_validateur }} :</strong
-          >
+          <strong>Correction demandée par {{ rapport.nom_validateur }} :</strong>
           {{ rapport.commentaire_validation }}
         </p>
         <p v-else-if="rapport.statut === 'soumis'" class="bandeau bandeau-info">
-          Soumis le {{ formaterDateHeure(rapport.date_soumission) }}, en attente
-          de validation.
+          Soumis le {{ formaterDateHeure(rapport.date_soumission) }}, en attente de validation.
         </p>
         <p v-else-if="rapport.statut === 'valide'" class="bandeau bandeau-ok">
           Validé par {{ rapport.nom_validateur }} le
@@ -368,34 +346,18 @@ onMounted(async () => {
             Télécharger le PDF
           </button>
           <template v-if="rapport.modifiable">
-            <button
-              class="btn btn-outline btn-sm"
-              :disabled="envoi"
-              @click="enregistrerBrouillon"
-            >
+            <button class="btn btn-outline btn-sm" :disabled="envoi" @click="enregistrerBrouillon">
               Enregistrer le brouillon
             </button>
-            <button
-              class="btn btn-primary btn-sm"
-              :disabled="envoi"
-              @click="soumettre"
-            >
+            <button class="btn btn-primary btn-sm" :disabled="envoi" @click="soumettre">
               Soumettre
             </button>
           </template>
           <template v-if="rapport.peut_valider">
-            <button
-              class="btn btn-outline btn-sm"
-              :disabled="envoi"
-              @click="ouvrirCorrection"
-            >
+            <button class="btn btn-outline btn-sm" :disabled="envoi" @click="ouvrirCorrection">
               Demander une correction
             </button>
-            <button
-              class="btn btn-primary btn-sm"
-              :disabled="envoi"
-              @click="valider"
-            >
+            <button class="btn btn-primary btn-sm" :disabled="envoi" @click="valider">
               Valider
             </button>
           </template>
@@ -434,20 +396,15 @@ onMounted(async () => {
             </div>
           </dl>
           <p class="eyebrow">Membres de l'équipe de mission</p>
-          <p v-if="rapport.membres.length === 0" class="muted">
-            Aucun participant enregistré.
-          </p>
+          <p v-if="rapport.membres.length === 0" class="muted">Aucun participant enregistré.</p>
           <ul v-else class="list-clean">
             <li v-for="(m, i) in rapport.membres" :key="i" class="membre">
               <strong>{{ m.nom }}</strong>
-              <span class="muted">{{
-                m.fonction || "fonction non précisée"
-              }}</span>
+              <span class="muted">{{ m.fonction || "fonction non précisée" }}</span>
             </li>
           </ul>
           <p class="muted petit">
-            Ces informations viennent de la mission. Pour les corriger, modifie
-            la mission.
+            Ces informations viennent de la mission. Pour les corriger, modifie la mission.
           </p>
         </section>
 
@@ -479,6 +436,59 @@ onMounted(async () => {
               :readonly="!rapport.modifiable"
             ></textarea>
           </div>
+
+          <template v-if="s.chrono">
+            <p class="eyebrow" style="margin-top: 1rem">Chronogramme réalisé</p>
+            <p v-if="chrono.length === 0" class="muted">
+              Aucune journée enregistrée pour cet axe. Ajoute-les depuis « Voir le suivi » d'un
+              district, sur la page de la mission : elles apparaîtront ici.
+            </p>
+            <template v-for="d in rapport.districts" :key="d.id_mission_district">
+              <template v-if="chronoDe(d.id_mission_district).length">
+                <h3 class="sous-titre-chrono">Chronogramme réalisé à {{ d.nom }}</h3>
+                <div
+                  v-for="j in chronoDe(d.id_mission_district)"
+                  :key="j.id_journee"
+                  class="jour"
+                >
+                  <p class="jour-entete">
+                    <strong>{{ dateSimple(j.date) }}</strong>
+                    <span class="muted">{{ j.lieu || "lieu non précisé" }}</span>
+                    <span class="badge badge-neutral">{{ LIBELLES_JOURNEE[j.statut] ?? j.statut }}</span>
+                  </p>
+                  <div class="grille-chrono">
+                    <div class="field">
+                      <label :for="'cp-' + j.id_journee">Activités planifiées</label>
+                      <textarea
+                        :id="'cp-' + j.id_journee"
+                        v-model="j.activites_prevues"
+                        rows="3"
+                        :readonly="!rapport.modifiable"
+                      ></textarea>
+                    </div>
+                    <div class="field">
+                      <label :for="'cr-' + j.id_journee">Activités réellement réalisées</label>
+                      <textarea
+                        :id="'cr-' + j.id_journee"
+                        v-model="j.activites_realisees"
+                        rows="3"
+                        :readonly="!rapport.modifiable"
+                      ></textarea>
+                    </div>
+                    <div class="field">
+                      <label :for="'ce-' + j.id_journee">Écart / justification</label>
+                      <textarea
+                        :id="'ce-' + j.id_journee"
+                        v-model="j.ecart"
+                        rows="3"
+                        :readonly="!rapport.modifiable"
+                      ></textarea>
+                    </div>
+                  </div>
+                </div>
+              </template>
+            </template>
+          </template>
         </section>
 
         <!-- Résultats : calculés depuis les indicateurs de la mission -->
@@ -512,17 +522,15 @@ onMounted(async () => {
             </table>
           </div>
           <p class="muted petit">
-            Ce tableau vient des indicateurs de la mission : mets à jour les
-            valeurs réalisées depuis la page de la mission.
+            Ce tableau vient des indicateurs de la mission : mets à jour les valeurs réalisées
+            depuis la page de la mission.
           </p>
         </section>
 
         <!-- Difficultés -->
         <section class="card">
           <h2>5. Difficultés rencontrées et solutions apportées</h2>
-          <p v-if="difficultes.length === 0" class="muted">
-            Aucune difficulté signalée.
-          </p>
+          <p v-if="difficultes.length === 0" class="muted">Aucune difficulté signalée.</p>
           <div v-for="(d, i) in difficultes" :key="i" class="difficulte">
             <div class="grid-2">
               <div class="field">
@@ -589,10 +597,9 @@ onMounted(async () => {
         <section class="card">
           <h2>Annexes à joindre</h2>
           <p class="muted">
-            Chaque district a besoin d'une fiche de réception signée, d'une
-            fiche de présence et d'au moins une photo. Une fiche d'évaluation
-            consolidée est requise pour l'axe. Le rapport ne peut être soumis
-            que lorsque tout est fourni.
+            Chaque district a besoin d'une fiche de réception signée, d'une fiche de présence et
+            d'au moins une photo. Une fiche d'évaluation consolidée est requise pour l'axe. Le
+            rapport ne peut être soumis que lorsque tout est fourni.
           </p>
           <PiecesJointes :rapport="rapport" @change="charger(false)" />
         </section>
@@ -618,11 +625,7 @@ onMounted(async () => {
           ></textarea>
         </div>
         <div class="actions-modale">
-          <button
-            type="button"
-            class="btn btn-outline btn-sm"
-            @click="modaleCorrection = false"
-          >
+          <button type="button" class="btn btn-outline btn-sm" @click="modaleCorrection = false">
             Annuler
           </button>
           <button
@@ -714,6 +717,38 @@ onMounted(async () => {
   flex-wrap: wrap;
   gap: 0.6rem;
   padding: 0.3rem 0;
+}
+
+.sous-titre-chrono {
+  margin: 1rem 0 0.5rem;
+  font-size: 1rem;
+}
+
+.jour {
+  margin-bottom: 0.8rem;
+  padding: 0.8rem 1rem 0.2rem;
+  background: var(--bg-soft);
+  border-radius: 16px;
+}
+
+.jour-entete {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.7rem;
+  margin: 0 0 0.6rem;
+}
+
+.grille-chrono {
+  display: grid;
+  gap: 0.8rem;
+  grid-template-columns: repeat(3, 1fr);
+}
+
+@media (max-width: 760px) {
+  .grille-chrono {
+    grid-template-columns: 1fr;
+  }
 }
 
 .petit {
