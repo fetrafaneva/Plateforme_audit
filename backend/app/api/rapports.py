@@ -27,6 +27,7 @@ from sqlalchemy.orm import Session, joinedload, selectinload
 from app.api.deps import get_current_user, require_role
 from app.core.config import settings
 from app.core.journal import ajouter_entree, obtenir_id_ressource
+from app.core.notifications import notifier, notifier_administrateurs
 from app.core.pdf_rapport import construire_pdf
 from app.db.base import get_db
 from app.models.identity import Utilisateur
@@ -42,12 +43,15 @@ from app.models.missions import (
 from app.models.rapports import PieceJointe, RapportDifficulte, RapportMission
 from app.schemas.rapports import (
     AxeDisponibleOut,
+    ChronoLigneIn,
     CompletudeOut,
+    CompteursRapportsOut,
     CorrectionIn,
     DifficulteIn,
     DifficulteOut,
     DistrictRapportOut,
     ElementCompletude,
+    JourneeRapportOut,
     MembreOut,
     PieceOut,
     RapportCreate,
@@ -156,6 +160,38 @@ def _verifier_edition(rapport: RapportMission, user: Utilisateur) -> None:
             status_code=400,
             detail=f"Le rapport est « {rapport.statut} » : il n'est plus modifiable",
         )
+
+
+def _libelle_axe(rapport: RapportMission) -> str:
+    numero = rapport.axe.numero_axe if rapport.axe.numero_axe is not None else rapport.axe_id
+    return f"axe {numero} de « {rapport.axe.mission.titre} »"
+
+
+def _journees_axe(db: Session, noms_districts: dict[int, str]) -> list[JourneeRapportOut]:
+    """Journées des districts de l'axe, avec les colonnes du chronogramme."""
+    if not noms_districts:
+        return []
+    journees = (
+        db.query(Journee)
+        .filter(Journee.mission_district_id.in_(list(noms_districts)))
+        .order_by(Journee.mission_district_id, Journee.date, Journee.numero_jour, Journee.id)
+        .all()
+    )
+    return [
+        JourneeRapportOut(
+            id_journee=j.id,
+            id_mission_district=j.mission_district_id,
+            nom_district=noms_districts[j.mission_district_id],
+            numero_jour=j.numero_jour,
+            date=j.date,
+            lieu=j.lieu,
+            statut=j.statut,
+            activites_prevues=j.activites_prevues,
+            activites_realisees=j.activites_realisees,
+            ecart=j.ecart,
+        )
+        for j in journees
+    ]
 
 
 def _est_membre_axe(db: Session, user: Utilisateur, axe_id: int) -> bool:
@@ -278,6 +314,7 @@ def _detail(db: Session, rapport: RapportMission, user: Utilisateur) -> RapportD
         for md, nom in lignes
     ]
     noms_districts = {d.id_mission_district: d.nom for d in districts}
+    journees = _journees_axe(db, noms_districts)
 
     membres = [
         MembreOut(nom=p.nom, fonction=p.fonction, equipe=type_equipe)
@@ -357,6 +394,7 @@ def _detail(db: Session, rapport: RapportMission, user: Utilisateur) -> RapportD
         periode_fin=fin,
         districts=districts,
         membres=membres,
+        journees=journees,
         resultats=resultats,
         id_auteur=rapport.id_auteur,
         auteur=f"{rapport.auteur.prenom} {rapport.auteur.nom}",
@@ -414,6 +452,28 @@ def axes_disponibles(
         )
         for a in axes
     ]
+
+
+@router.get(
+    "/compteurs",
+    response_model=CompteursRapportsOut,
+    dependencies=[Depends(require_role(*ROLES_LECTURE))],
+)
+def compter_rapports(
+    current_user: Utilisateur = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Nombre de rapports par statut (les siens pour un chef de mission, tous sinon)."""
+    requete = db.query(RapportMission.statut, func.count(RapportMission.id))
+    if _role(current_user) == "chef_mission":
+        requete = requete.filter(RapportMission.id_auteur == current_user.id_utilisateur)
+    comptes = dict(requete.group_by(RapportMission.statut).all())
+    return CompteursRapportsOut(
+        brouillon=comptes.get("brouillon", 0),
+        soumis=comptes.get("soumis", 0),
+        a_corriger=comptes.get("a_corriger", 0),
+        valide=comptes.get("valide", 0),
+    )
 
 
 @router.get(
@@ -564,6 +624,51 @@ def remplacer_difficultes(
         DifficulteOut(id=d.id, categorie=d.categorie, description=d.description, solution=d.solution)
         for d in rapport.difficultes
     ]
+
+
+@router.put(
+    "/{id_rapport}/chronogramme",
+    response_model=list[JourneeRapportOut],
+    dependencies=[Depends(require_role(*ROLES_REDACTION))],
+)
+def remplacer_chronogramme(
+    id_rapport: int,
+    lignes: list[ChronoLigneIn],
+    current_user: Utilisateur = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Renseigne, jour par jour, les activités planifiées, réalisées et l'écart."""
+    rapport = _charger(db, id_rapport)
+    _verifier_edition(rapport, current_user)
+
+    noms = {
+        md.id: nom
+        for md, nom in (
+            db.query(MissionDistrict, District.nom)
+            .join(District, District.id == MissionDistrict.district_id)
+            .filter(MissionDistrict.axe_id == rapport.axe_id)
+            .all()
+        )
+    }
+    journees = (
+        {j.id: j for j in db.query(Journee).filter(Journee.mission_district_id.in_(list(noms)))}
+        if noms
+        else {}
+    )
+    for ligne in lignes:
+        journee = journees.get(ligne.id_journee)
+        if journee is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"La journée {ligne.id_journee} n'appartient pas à l'axe de ce rapport",
+            )
+        journee.activites_prevues = (ligne.activites_prevues or "").strip() or None
+        journee.activites_realisees = (ligne.activites_realisees or "").strip() or None
+        journee.ecart = (ligne.ecart or "").strip() or None
+
+    rapport.date_modification = _maintenant()
+    db.commit()
+    return _journees_axe(db, noms)
 
 
 # ---------------------------------------------------------------------------
@@ -747,6 +852,14 @@ def soumettre_rapport(
     rapport.date_soumission = _maintenant()
     rapport.date_modification = rapport.date_soumission
     rapport.commentaire_validation = None
+    notifier_administrateurs(
+        db,
+        "rapport_soumis",
+        f"{rapport.auteur.prenom} {rapport.auteur.nom} a soumis le rapport de l'{_libelle_axe(rapport)}. "
+        "Il attend ta validation.",
+        f"/rapports/{rapport.id}",
+        sauf=current_user.id_utilisateur,
+    )
     _journaliser(db, current_user, "modification", request)
     db.commit()
     return _detail(db, _charger(db, id_rapport), current_user)
@@ -773,6 +886,13 @@ def valider_rapport(
     rapport.id_validateur = current_user.id_utilisateur
     rapport.date_validation = _maintenant()
     rapport.commentaire_validation = None
+    notifier(
+        db,
+        rapport.id_auteur,
+        "rapport_valide",
+        f"Ton rapport de l'{_libelle_axe(rapport)} a été validé. Tu peux télécharger le PDF.",
+        f"/rapports/{rapport.id}",
+    )
     _journaliser(db, current_user, "modification", request)
     db.commit()
     return _detail(db, _charger(db, id_rapport), current_user)
@@ -800,6 +920,14 @@ def demander_correction(
     rapport.id_validateur = current_user.id_utilisateur
     rapport.date_validation = _maintenant()
     rapport.commentaire_validation = payload.commentaire.strip()
+    notifier(
+        db,
+        rapport.id_auteur,
+        "rapport_correction",
+        f"Ton rapport de l'{_libelle_axe(rapport)} est renvoyé pour correction : "
+        f"{rapport.commentaire_validation}",
+        f"/rapports/{rapport.id}",
+    )
     _journaliser(db, current_user, "modification", request)
     db.commit()
     return _detail(db, _charger(db, id_rapport), current_user)
@@ -814,19 +942,10 @@ def _donnees_pdf(db: Session, rapport: RapportMission, detail: RapportDetailOut)
     """Données du rapport au format attendu par app.core.pdf_rapport.construire_pdf."""
     donnees = detail.model_dump()
 
-    ids_districts = [d.id_mission_district for d in detail.districts]
-    journees: dict[int, list[dict]] = {i: [] for i in ids_districts}
-    if ids_districts:
-        lignes = (
-            db.query(Journee)
-            .filter(Journee.mission_district_id.in_(ids_districts))
-            .order_by(Journee.mission_district_id, Journee.date, Journee.numero_jour)
-            .all()
-        )
-        for j in lignes:
-            journees[j.mission_district_id].append(
-                {"numero_jour": j.numero_jour, "date": j.date, "lieu": j.lieu, "statut": j.statut}
-            )
+    # Le PDF attend les journées regroupées par district.
+    journees: dict[int, list[dict]] = {d.id_mission_district: [] for d in detail.districts}
+    for journee in donnees["journees"]:
+        journees[journee["id_mission_district"]].append(journee)
     donnees["journees"] = journees
 
     pieces_par_id = {p.id: p for p in rapport.pieces}

@@ -1,40 +1,46 @@
 <script setup>
 import { ref, reactive, computed, onMounted } from "vue";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { useAuthStore } from "../stores/auth";
 import ModalDialog from "../components/ModalDialog.vue";
 import { confirmer } from "../composables/useConfirmation";
 import {
   obtenirMission,
   modifierMission,
+  supprimerMission,
   listerAxes,
   creerAxe,
+  supprimerAxe,
   listerEquipes,
   creerEquipe,
+  supprimerEquipe,
   listerParticipants,
   creerParticipant,
+  modifierParticipant,
+  supprimerParticipant,
   listerMissionsDistricts,
   creerMissionDistrict,
   modifierMissionDistrict,
+  supprimerMissionDistrict,
   listerDistricts,
   listerTypesActivite,
   listerPhases,
+  creerPhase,
   modifierPhase,
   listerJournees,
+  creerJournee,
   modifierJournee,
   listerLivrables,
+  creerLivrable,
   modifierLivrable,
   listerIndicateurs,
-  modifierIndicateur,
-  creerPhase,
-  creerJournee,
-  creerLivrable,
   creerIndicateur,
-  modifierParticipant,
+  modifierIndicateur,
   listerUtilisateurs,
 } from "../services/missions";
 
 const route = useRoute();
+const router = useRouter();
 const authStore = useAuthStore();
 
 const mission = ref(null);
@@ -44,17 +50,18 @@ const indicateurs = ref([]);
 const typesParId = ref({});
 const typesActivite = ref([]);
 const utilisateurs = ref([]);
-// Formulaire ouvert à l'intérieur de la fenêtre de suivi : { type: "phase" | "journee" | "livrable", phaseId? }
-const sousFormulaire = ref(null);
 const chargement = ref(true);
 const erreur = ref("");
 const erreurAction = ref("");
 const envoi = ref(false);
 
-// Fenêtre modale ouverte : { type: "axe" | "equipe" | "participant" | "district" | "suivi" | "indicateur", ...contexte }
+// Fenêtre ouverte : { type: "mission" | "axe" | "equipe" | "participant" | "compte" | "district" | "indicateur" | "suivi", ...contexte }
 const modale = ref(null);
 const erreurModale = ref("");
 const ongletSuivi = ref("phases");
+
+// Formulaire ouvert à l'intérieur de la fenêtre de suivi : { type: "phase" | "journee" | "livrable", phaseId? }
+const sousFormulaire = ref(null);
 
 // Suivi par district, rechargé à chaque ouverture de la fenêtre
 const details = reactive({});
@@ -65,6 +72,10 @@ const valeurEdition = ref("");
 
 function champsVides() {
   return {
+    missionTitre: "",
+    missionType: "",
+    missionDebut: "",
+    missionFin: "",
     numeroAxe: "",
     itineraire: "",
     districtId: "",
@@ -72,6 +83,7 @@ function champsVides() {
     typeEquipe: "",
     nomParticipant: "",
     fonction: "",
+    utilisateurId: "",
     phaseTypeId: "",
     phaseOrdre: "",
     phaseDuree: "",
@@ -85,21 +97,20 @@ function champsVides() {
     mesure: "",
     cible: "",
     realise: "",
-    utilisateurId: "",
   };
 }
 const champs = reactive(champsVides());
 
+const role = computed(() => authStore.utilisateur?.role);
 // Planifier : chef de mission et administrateur
 const peutPlanifier = computed(() =>
-  ["chef_mission", "administrateur"].includes(authStore.utilisateur?.role)
+  ["chef_mission", "administrateur"].includes(role.value)
 );
 // Saisir l'avancement sur le terrain : le technicien aussi
 const peutSaisir = computed(() =>
-  ["technicien", "chef_mission", "administrateur"].includes(
-    authStore.utilisateur?.role
-  )
+  ["technicien", "chef_mission", "administrateur"].includes(role.value)
 );
+const estAdmin = computed(() => role.value === "administrateur");
 
 // Transitions proposées dans l'interface. Le backend accepte toute valeur
 // valide du schéma : modifier ces tables ne touche pas à l'API.
@@ -136,6 +147,19 @@ const TRANSITIONS_JOURNEE = {
   ],
   realisee: [],
   annulee: [{ vers: "prevue", libelle: "Reprogrammer" }],
+};
+
+const LIBELLES_STATUT = {
+  planifiee: "planifiée",
+  en_cours: "en cours",
+  terminee: "terminée",
+  annulee: "annulée",
+  a_planifier: "à planifier",
+  planifie: "planifié",
+  termine: "terminé",
+  a_faire: "à faire",
+  prevue: "prévue",
+  realisee: "réalisée",
 };
 
 const transitionsMission = computed(
@@ -225,6 +249,7 @@ const mdCourant = computed(() => {
 const titreModale = computed(() => {
   const m = modale.value;
   if (!m) return "";
+  if (m.type === "mission") return "Modifier la mission";
   if (m.type === "axe") return "Nouvel axe";
   if (m.type === "equipe") {
     return detailModale.value
@@ -238,18 +263,18 @@ const titreModale = computed(() => {
         }`
       : "Nouveau participant";
   }
+  if (m.type === "compte") return `Lier un compte à ${m.participantNom}`;
   if (m.type === "district") {
     return detailModale.value
       ? `Lier un district, ${libelleAxe(detailModale.value)}`
       : "Lier un district";
   }
+  if (m.type === "indicateur") return "Nouvel indicateur";
   if (m.type === "suivi") {
     return mdCourant.value
       ? `Suivi du district : ${mdCourant.value.nom}`
       : "Suivi du district";
   }
-  if (m.type === "indicateur") return "Nouvel indicateur";
-  if (m.type === "compte") return `Lier un compte à ${m.participantNom}`;
   return "";
 });
 
@@ -270,11 +295,15 @@ function ouvrirModale(type, contexte = {}) {
   if (type === "axe") {
     champs.numeroAxe = axesDetails.value.length + 1;
   }
+  if (type === "mission") {
+    champs.missionTitre = mission.value.titre ?? "";
+    champs.missionType = mission.value.type_mission ?? "";
+    champs.missionDebut = (mission.value.date_debut ?? "").slice(0, 10);
+    champs.missionFin = (mission.value.date_fin_prevue ?? "").slice(0, 10);
+  }
   modale.value = { type, ...contexte };
   if (type === "participant" || type === "compte") chargerUtilisateurs();
-  if (type === "suivi") {
-    chargerSuivi(contexte.mdId);
-  }
+  if (type === "suivi") chargerSuivi(contexte.mdId);
 }
 
 function fermerModale() {
@@ -393,6 +422,17 @@ async function executerSuivi(mdId, action) {
   }
 }
 
+function confirmerStatut(objet, nom, vers) {
+  return confirmer({
+    titre: "Changer le statut",
+    message: `${objet} « ${nom} » passera au statut « ${
+      LIBELLES_STATUT[vers] ?? vers
+    } ».`,
+    libelleConfirmer: "Confirmer",
+    danger: vers === "annulee",
+  });
+}
+
 async function changerStatutPhase(mdId, phase, vers) {
   if (!(await confirmerStatut("La phase", phase.libelle, vers))) return;
   return executerSuivi(mdId, () => modifierPhase(phase.id, { statut: vers }));
@@ -415,11 +455,15 @@ async function changerStatutJournee(mdId, journee, vers) {
 async function signerLivrable(mdId, livrable) {
   const ok = await confirmer({
     titre: "Marquer le livrable signé",
-    message: `« ${livrable.type_livrable || "Livrable"} » sera marqué comme signé. Cette action ne peut pas être annulée depuis l'interface.`,
+    message: `« ${
+      livrable.type_livrable || "Livrable"
+    } » sera marqué comme signé. Cette action ne peut pas être annulée depuis l'interface.`,
     libelleConfirmer: "Marquer signé",
   });
   if (!ok) return;
-  return executerSuivi(mdId, () => modifierLivrable(livrable.id, { signe: true }));
+  return executerSuivi(mdId, () =>
+    modifierLivrable(livrable.id, { signe: true })
+  );
 }
 
 async function changerStatutDistrict(md, vers) {
@@ -480,6 +524,18 @@ async function executerFormulaire(action) {
   }
 }
 
+function modifierLaMission() {
+  const payload = {
+    titre: champs.missionTitre.trim(),
+    type_mission: champs.missionType.trim(),
+  };
+  if (champs.missionDebut)
+    payload.date_debut = `${champs.missionDebut}T00:00:00`;
+  if (champs.missionFin)
+    payload.date_fin_prevue = `${champs.missionFin}T00:00:00`;
+  return executerFormulaire(() => modifierMission(mission.value.id, payload));
+}
+
 function ajouterAxe() {
   return executerFormulaire(() =>
     creerAxe({
@@ -502,12 +558,12 @@ function ajouterEquipe() {
 function ajouterParticipant() {
   return executerFormulaire(() =>
     creerParticipant({
-      id_utilisateur: champs.utilisateurId
-        ? Number(champs.utilisateurId)
-        : null,
       equipe_id: modale.value.equipeId,
       nom: champs.nomParticipant.trim(),
       fonction: champs.fonction.trim() || null,
+      id_utilisateur: champs.utilisateurId
+        ? Number(champs.utilisateurId)
+        : null,
     })
   );
 }
@@ -529,6 +585,18 @@ function lierDistrict() {
       ordre_visite: champs.ordreVisite
         ? Number(champs.ordreVisite)
         : detail.districts.length + 1,
+    })
+  );
+}
+
+function ajouterIndicateur() {
+  return executerFormulaire(() =>
+    creerIndicateur({
+      mission_id: mission.value.id,
+      resultat_attendu: champs.resultat.trim() || null,
+      indicateur_mesure: champs.mesure.trim() || null,
+      cible: champs.cible.trim() || null,
+      valeur_realisee: champs.realise.trim() || null,
     })
   );
 }
@@ -599,42 +667,6 @@ function ajouterLivrable() {
   );
 }
 
-function ajouterIndicateur() {
-  return executerFormulaire(() =>
-    creerIndicateur({
-      mission_id: mission.value.id,
-      resultat_attendu: champs.resultat.trim() || null,
-      indicateur_mesure: champs.mesure.trim() || null,
-      cible: champs.cible.trim() || null,
-      valeur_realisee: champs.realise.trim() || null,
-    })
-  );
-}
-
-const LIBELLES_STATUT = {
-  planifiee: "planifiée",
-  en_cours: "en cours",
-  terminee: "terminée",
-  annulee: "annulée",
-  a_planifier: "à planifier",
-  planifie: "planifié",
-  termine: "terminé",
-  a_faire: "à faire",
-  prevue: "prévue",
-  realisee: "réalisée",
-};
-
-function confirmerStatut(objet, nom, vers) {
-  return confirmer({
-    titre: "Changer le statut",
-    message: `${objet} « ${nom} » passera au statut « ${
-      LIBELLES_STATUT[vers] ?? vers
-    } ».`,
-    libelleConfirmer: "Confirmer",
-    danger: vers === "annulee",
-  });
-}
-
 // ---------- Actions sur la mission ----------
 
 async function changerStatutMission(vers) {
@@ -650,6 +682,75 @@ async function changerStatutMission(vers) {
   } finally {
     envoi.value = false;
   }
+}
+
+// ---------- Suppressions ----------
+// Le serveur refuse de supprimer un élément qui contient encore d'autres éléments
+// (une équipe avec des participants, par exemple) et explique pourquoi : ce message
+// est affiché tel quel en haut de la page.
+
+async function supprimerElement({ titre, message, action, apres }) {
+  const ok = await confirmer({
+    titre,
+    message,
+    libelleConfirmer: "Supprimer",
+    danger: true,
+  });
+  if (!ok) return;
+  erreurAction.value = "";
+  try {
+    await action();
+    if (apres) apres();
+    else await charger(true);
+  } catch (e) {
+    erreurAction.value = messageErreur(e);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+}
+
+function retirerParticipant(participant) {
+  return supprimerElement({
+    titre: "Retirer le participant",
+    message: `« ${participant.nom} » sera retiré de l'équipe.`,
+    action: () => supprimerParticipant(participant.id),
+  });
+}
+
+function retirerEquipe(eq) {
+  return supprimerElement({
+    titre: "Supprimer l'équipe",
+    message: `L'équipe « ${
+      eq.equipe.type_equipe || "#" + eq.equipe.id
+    } » sera supprimée. Elle doit d'abord ne plus avoir de participant.`,
+    action: () => supprimerEquipe(eq.equipe.id),
+  });
+}
+
+function retirerDistrictLie(md) {
+  return supprimerElement({
+    titre: "Retirer le district",
+    message: `« ${md.nom} » ne sera plus rattaché à cet axe. Impossible tant qu'il a des phases ou des journées.`,
+    action: () => supprimerMissionDistrict(md.id),
+  });
+}
+
+function retirerAxe(detail) {
+  return supprimerElement({
+    titre: "Supprimer l'axe",
+    message: `${libelleAxe(
+      detail
+    )} sera supprimé. Il doit d'abord ne plus avoir ni équipe ni district.`,
+    action: () => supprimerAxe(detail.axe.id),
+  });
+}
+
+function retirerMission() {
+  return supprimerElement({
+    titre: "Supprimer la mission",
+    message: `La mission « ${mission.value.titre} » sera supprimée définitivement. Elle doit d'abord ne plus avoir d'axe ni d'indicateur.`,
+    action: () => supprimerMission(mission.value.id),
+    apres: () => router.push({ name: "missions" }),
+  });
 }
 
 onMounted(async () => {
@@ -700,8 +801,17 @@ onMounted(async () => {
           >
             {{ t.libelle }}
           </button>
+          <button
+            class="btn btn-outline btn-sm"
+            @click="ouvrirModale('mission')"
+          >
+            Modifier la mission
+          </button>
           <button class="btn btn-primary btn-sm" @click="ouvrirModale('axe')">
             + Ajouter un axe
+          </button>
+          <button v-if="estAdmin" class="btn-suppr" @click="retirerMission">
+            Supprimer la mission
           </button>
         </div>
 
@@ -785,7 +895,16 @@ onMounted(async () => {
           :key="detail.axe.id"
           class="card"
         >
-          <h2>{{ libelleAxe(detail) }}</h2>
+          <div class="entete-axe">
+            <h2>{{ libelleAxe(detail) }}</h2>
+            <button
+              v-if="peutPlanifier"
+              class="btn-suppr"
+              @click="retirerAxe(detail)"
+            >
+              Supprimer l'axe
+            </button>
+          </div>
           <p v-if="detail.axe.itineraire_principal" class="muted">
             {{ detail.axe.itineraire_principal }}
           </p>
@@ -816,6 +935,13 @@ onMounted(async () => {
                     >
                       Voir le suivi
                     </button>
+                    <button
+                      v-if="peutPlanifier"
+                      class="btn-suppr"
+                      @click="retirerDistrictLie(d)"
+                    >
+                      Retirer
+                    </button>
                   </span>
                 </li>
               </ul>
@@ -842,9 +968,18 @@ onMounted(async () => {
                 :key="eq.equipe.id"
                 class="equipe-bloc"
               >
-                <h3>
-                  {{ eq.equipe.type_equipe || "Équipe #" + eq.equipe.id }}
-                </h3>
+                <div class="entete-equipe">
+                  <h3>
+                    {{ eq.equipe.type_equipe || "Équipe #" + eq.equipe.id }}
+                  </h3>
+                  <button
+                    v-if="peutPlanifier"
+                    class="btn-suppr"
+                    @click="retirerEquipe(eq)"
+                  >
+                    Supprimer
+                  </button>
+                </div>
                 <ul v-if="eq.participants.length" class="list-clean">
                   <li
                     v-for="p in eq.participants"
@@ -859,21 +994,30 @@ onMounted(async () => {
                         p.fonction || "Rôle non précisé"
                       }}</small>
                     </span>
-                    <span v-if="p.id_utilisateur" class="badge badge-ok"
-                      >Compte lié</span
-                    >
-                    <button
-                      v-else-if="peutPlanifier"
-                      class="btn btn-outline btn-sm"
-                      @click="
-                        ouvrirModale('compte', {
-                          participantId: p.id,
-                          participantNom: p.nom,
-                        })
-                      "
-                    >
-                      Lier un compte
-                    </button>
+                    <span class="actions-participant">
+                      <span v-if="p.id_utilisateur" class="badge badge-ok"
+                        >Compte lié</span
+                      >
+                      <button
+                        v-else-if="peutPlanifier"
+                        class="btn btn-outline btn-sm"
+                        @click="
+                          ouvrirModale('compte', {
+                            participantId: p.id,
+                            participantNom: p.nom,
+                          })
+                        "
+                      >
+                        Lier un compte
+                      </button>
+                      <button
+                        v-if="peutPlanifier"
+                        class="btn-suppr"
+                        @click="retirerParticipant(p)"
+                      >
+                        Retirer
+                      </button>
+                    </span>
                   </li>
                 </ul>
                 <p v-else class="muted">Aucun participant.</p>
@@ -911,8 +1055,57 @@ onMounted(async () => {
     >
       <p v-if="erreurModale" class="alert-error">{{ erreurModale }}</p>
 
+      <!-- Modifier la mission -->
+      <form
+        v-if="modale.type === 'mission'"
+        @submit.prevent="modifierLaMission"
+      >
+        <div class="field">
+          <label for="m-titre">Titre</label>
+          <input id="m-titre" v-model="champs.missionTitre" required />
+        </div>
+        <div class="field">
+          <label for="m-type">Type de mission</label>
+          <input
+            id="m-type"
+            v-model="champs.missionType"
+            placeholder="ex : deploiement_serveur"
+          />
+        </div>
+        <div class="grid-2">
+          <div class="field">
+            <label for="m-debut">Date de début</label>
+            <input id="m-debut" v-model="champs.missionDebut" type="date" />
+          </div>
+          <div class="field">
+            <label for="m-fin">Date de fin prévue</label>
+            <input id="m-fin" v-model="champs.missionFin" type="date" />
+          </div>
+        </div>
+        <p class="muted petit">
+          Le statut se change avec les boutons « Démarrer », « Terminer » ou «
+          Annuler ».
+        </p>
+        <div class="modal-actions">
+          <button
+            type="button"
+            class="btn btn-outline btn-sm"
+            @click="fermerModale"
+          >
+            Annuler
+          </button>
+          <button
+            type="submit"
+            class="btn btn-primary btn-sm"
+            :disabled="envoi"
+          >
+            {{ envoi ? "Enregistrement..." : "Enregistrer" }}
+          </button>
+        </div>
+      </form>
+
       <!-- Nouvel axe -->
-      <form v-if="modale.type === 'axe'" @submit.prevent="ajouterAxe">
+      <form v-else-if="modale.type === 'axe'" @submit.prevent="ajouterAxe">
         <div class="field">
           <label for="num-axe">Numéro de l'axe</label>
           <input
@@ -1076,7 +1269,8 @@ onMounted(async () => {
         @submit.prevent="lierDistrict"
       >
         <p v-if="districtsDisponibles(detailModale).length === 0" class="muted">
-          Aucun district disponible : un administrateur doit d'abord en créer.
+          Aucun district disponible : l'administrateur doit d'abord en ajouter
+          dans « Référentiels ».
         </p>
         <template v-else>
           <div class="field">
@@ -1223,14 +1417,15 @@ onMounted(async () => {
           {{ details[mdCourant.id].erreur }}
         </p>
 
+        <!-- Formulaires de création (phase, journée, livrable) -->
         <template v-else-if="sousFormulaire">
-          <!-- Nouvelle phase -->
           <form
             v-if="sousFormulaire.type === 'phase'"
             @submit.prevent="ajouterPhase"
           >
             <p v-if="typesActivite.length === 0" class="muted">
-              Aucun type d'activité : un administrateur doit d'abord en créer.
+              Aucun type d'activité : l'administrateur doit d'abord en ajouter
+              dans « Référentiels ».
             </p>
             <template v-else>
               <div class="field">
@@ -1287,7 +1482,6 @@ onMounted(async () => {
             </div>
           </form>
 
-          <!-- Nouvelle journée -->
           <form
             v-else-if="sousFormulaire.type === 'journee'"
             @submit.prevent="ajouterJournee"
@@ -1331,7 +1525,6 @@ onMounted(async () => {
             </div>
           </form>
 
-          <!-- Nouveau livrable -->
           <form
             v-else-if="sousFormulaire.type === 'livrable'"
             @submit.prevent="ajouterLivrable"
@@ -1499,16 +1692,39 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-.ligne-participant > :last-child {
-  margin-left: auto;
-}
-
 .barre-actions {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   justify-content: flex-end;
   gap: 0.6rem;
   margin-bottom: 1.5rem;
+}
+
+.btn-suppr {
+  padding: 0;
+  background: none;
+  border: none;
+  font: inherit;
+  font-size: 0.85rem;
+  color: #b0173f;
+  cursor: pointer;
+}
+
+.btn-suppr:hover {
+  text-decoration: underline;
+}
+
+.entete-axe,
+.entete-equipe {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.entete-equipe h3 {
+  margin: 0;
 }
 
 .ligne-district {
@@ -1540,6 +1756,13 @@ onMounted(async () => {
   align-items: center;
   gap: 0.75rem;
   padding: 0.4rem 0;
+}
+
+.actions-participant {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-left: auto;
 }
 
 .lien-ajout {
@@ -1581,8 +1804,14 @@ onMounted(async () => {
 }
 
 .onglet.actif {
-  color: var(--violet, #6b3fd4);
-  border-bottom-color: var(--violet, #6b3fd4);
+  color: var(--violet);
+  border-bottom-color: var(--violet);
+}
+
+.barre-suivi {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 0.8rem;
 }
 
 .phase {
@@ -1605,12 +1834,6 @@ onMounted(async () => {
 .petit {
   margin: 0.2rem 0 0.4rem;
   font-size: 0.85rem;
-}
-
-.barre-suivi {
-  display: flex;
-  justify-content: flex-end;
-  margin-bottom: 0.8rem;
 }
 
 /* Tableau des indicateurs */

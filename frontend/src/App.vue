@@ -3,6 +3,7 @@ import { computed, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import { useAuthStore } from "./stores/auth";
 import ConfirmDialog from "./components/ConfirmDialog.vue";
+import NotificationBell from "./components/NotificationBell.vue";
 
 const authStore = useAuthStore();
 const router = useRouter();
@@ -66,6 +67,10 @@ onMounted(async () => {
         <RouterLink v-if="estAdmin" to="/admin/utilisateurs"
           >Comptes</RouterLink
         >
+        <RouterLink v-if="estAdmin" to="/admin/referentiels"
+          >Référentiels</RouterLink
+        >
+        <NotificationBell />
         <button class="btn btn-outline btn-sm" @click="seDeconnecter">
           Déconnexion
         </button>

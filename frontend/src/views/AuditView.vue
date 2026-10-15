@@ -14,6 +14,7 @@ import {
   listerProfils,
   listerRessources,
   obtenirFiche,
+  verifierPieces,
 } from "../services/audit";
 
 const PAGE = 50;
@@ -49,6 +50,10 @@ const chargementProfils = ref(false);
 // Vérification de la chaîne
 const verification = ref(null);
 const verificationEnCours = ref(false);
+
+// Intégrité des pièces jointes des rapports
+const verificationPieces = ref(null);
+const verificationPiecesEnCours = ref(false);
 
 // Fiche d'un utilisateur (identité, profil, missions, alertes)
 const ficheOuverte = ref(false);
@@ -231,6 +236,19 @@ async function verifier() {
   }
 }
 
+async function verifierLesPieces() {
+  verificationPiecesEnCours.value = true;
+  verificationPieces.value = null;
+  erreur.value = "";
+  try {
+    verificationPieces.value = await verifierPieces();
+  } catch (e) {
+    erreur.value = messageErreur(e, "La vérification des pièces a échoué.");
+  } finally {
+    verificationPiecesEnCours.value = false;
+  }
+}
+
 async function ouvrirEnquete(alerte) {
   const ok = await confirmer({
     titre: "Ouvrir une investigation",
@@ -380,6 +398,77 @@ onMounted(() => {
           }}
           ({{ verification.nb_entrees_verifiees }} entrées examinées).
         </p>
+      </section>
+
+      <!-- Intégrité des pièces jointes -->
+      <section class="card">
+        <div class="ligne-integrite">
+          <div>
+            <p class="eyebrow">Intégrité des pièces jointes</p>
+            <p class="muted" style="margin: 0">
+              Recalcule l'empreinte de chaque fichier joint aux rapports et la
+              compare à celle enregistrée au dépôt.
+            </p>
+          </div>
+          <button
+            class="btn btn-outline btn-sm"
+            :disabled="verificationPiecesEnCours"
+            @click="verifierLesPieces"
+          >
+            {{
+              verificationPiecesEnCours
+                ? "Vérification..."
+                : "Vérifier les pièces"
+            }}
+          </button>
+        </div>
+        <template v-if="verificationPieces">
+          <p
+            class="verif"
+            :class="verificationPieces.intact ? 'verif-ok' : 'verif-ko'"
+          >
+            <template v-if="verificationPieces.intact">
+              {{ verificationPieces.nb_verifiees }} pièce(s) vérifiée(s) :
+              toutes présentes et intactes.
+            </template>
+            <template v-else>
+              {{ verificationPieces.manquantes.length }} manquante(s) et
+              {{ verificationPieces.alterees.length }} altérée(s) sur
+              {{ verificationPieces.nb_verifiees }} pièce(s).
+            </template>
+          </p>
+          <ul
+            v-if="
+              verificationPieces.manquantes.length ||
+              verificationPieces.alterees.length
+            "
+            class="list-clean fiche-liste"
+          >
+            <li
+              v-for="p in verificationPieces.manquantes"
+              :key="'m' + p.id_piece"
+            >
+              <span class="badge badge-off">Manquante</span>
+              {{ p.nom_original }}
+              <small class="muted">rapport {{ p.id_rapport }}</small>
+            </li>
+            <li
+              v-for="p in verificationPieces.alterees"
+              :key="'a' + p.id_piece"
+            >
+              <span class="badge badge-off">Altérée</span>
+              {{ p.nom_original }}
+              <small class="muted">rapport {{ p.id_rapport }}</small>
+            </li>
+          </ul>
+          <p
+            v-if="verificationPieces.orphelins.length"
+            class="muted petit-note"
+          >
+            {{ verificationPieces.orphelins.length }} fichier(s) sur le disque
+            ne correspondent à aucune pièce enregistrée.
+          </p>
+        </template>
       </section>
 
       <p v-if="erreur" class="alert-error">{{ erreur }}</p>
@@ -961,6 +1050,11 @@ onMounted(() => {
 
 code {
   font-size: 0.8rem;
+}
+
+.petit-note {
+  margin: 0.8rem 0 0;
+  font-size: 0.85rem;
 }
 
 .lien-nom {

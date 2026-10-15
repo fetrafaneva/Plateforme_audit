@@ -1,0 +1,13 @@
+districts_madagascar.csv : liste de départ des districts de Madagascar (nom, région, province).
+
+ATTENTION : cette liste a été saisie de mémoire et n'est pas une source officielle.
+- Elle contient 113 districts, alors que 119 sont couramment cités : quelques districts
+  créés plus récemment manquent probablement.
+- L'orthographe de certains noms peut différer de celle des textes officiels
+  (par exemple Taolagnaro / Fort-Dauphin, Nosy-Be / Nosy Be).
+- La colonne « electrifie » est laissée vide : l'information n'est pas connue.
+
+À faire avant de s'appuyer dessus : la comparer à la liste officielle (décret ou
+annuaire du Ministère), puis compléter ou corriger. Depuis la page « Référentiels »
+de l'application, l'administrateur peut importer un fichier CSV de même format
+(colonnes : nom;region;province;electrifie) : les districts déjà présents sont ignorés.

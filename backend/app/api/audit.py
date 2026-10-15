@@ -12,6 +12,7 @@ from sqlalchemy import distinct, func
 from sqlalchemy.orm import Session, joinedload
 
 from app.api.deps import get_current_user, require_role
+from app.core.pieces import verifier_pieces
 from app.db.base import get_db
 from app.models.analyse import ProfilComportemental, ScoreAnomalie
 from app.models.audit import JournalAcces
@@ -31,6 +32,7 @@ from app.schemas.audit import (
     RessourceOut,
     ResumeAudit,
     ScoreLigneOut,
+    VerificationPiecesOut,
 )
 
 router = APIRouter(
@@ -457,4 +459,21 @@ def fiche_utilisateur(id_utilisateur: int, db: Session = Depends(get_db)):
         profil=_profil_out(profil, participations) if profil else None,
         participations=[_participation_out(p) for p in participations],
         alertes=[_alerte_out(a) for a in alertes],
+    )
+
+
+# ---------- Intégrité des pièces jointes ----------
+
+
+@router.get("/pieces/verify", response_model=VerificationPiecesOut)
+def verifier_pieces_jointes(db: Session = Depends(get_db)):
+    """Compare chaque pièce jointe enregistrée au fichier présent sur le disque.
+
+    Signale les fichiers manquants, ceux dont l'empreinte SHA-256 a changé depuis le
+    dépôt, et les fichiers du disque qu'aucune pièce n'enregistre.
+    """
+    resultat = verifier_pieces(db)
+    return VerificationPiecesOut(
+        intact=not resultat["manquantes"] and not resultat["alterees"],
+        **resultat,
     )

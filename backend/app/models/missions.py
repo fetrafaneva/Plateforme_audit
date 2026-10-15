@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, Date, Boolean, ForeignKey, UniqueConstraint
+from sqlalchemy import Column, Integer, String, Text, DateTime, Date, Boolean, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import relationship
 from app.db.base import Base
 
@@ -108,6 +108,9 @@ class Journee(Base):
     date = Column(Date)
     lieu = Column(String)
     statut = Column(String, default="prevue")
+    activites_prevues = Column(Text)
+    activites_realisees = Column(Text)
+    ecart = Column(Text)
 
     mission_district = relationship("MissionDistrict", back_populates="journees")
 

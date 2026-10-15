@@ -9,6 +9,7 @@ from app.models.reporting import BenchmarkingService, RapportAudit
 from app.models.ressources import RessourceSensible
 from app.models.securite import AlerteSecurite, Investigation, PolitiqueConformite
 from app.models.rapports import PieceJointe, RapportDifficulte, RapportMission
+from app.models.notifications import Notification
 
 __all__ = [
     "Role", "ServiceCommune", "Utilisateur", "RessourceSensible",
@@ -17,5 +18,5 @@ __all__ = [
     "RapportAudit", "BenchmarkingService",
     "District", "Mission", "Axe", "MissionDistrict", "Equipe", "Participant",
     "TypeActivite", "Phase", "Journee", "Livrable", "IndicateurPerformance",
-    "RapportMission", "RapportDifficulte", "PieceJointe",
+    "RapportMission", "RapportDifficulte", "PieceJointe","Notification",
 ]
