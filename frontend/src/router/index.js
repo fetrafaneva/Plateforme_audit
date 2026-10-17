@@ -9,6 +9,7 @@ import AdminUtilisateursView from "../views/AdminUtilisateursView.vue";
 import ServiceView from "../views/ServiceView.vue";
 import AdminReferentielsView from "../views/AdminReferentielsView.vue";
 import NotFoundView from "../views/NotFoundView.vue";
+import MonCompteView from "../views/MonCompteView.vue";
 import RapportsView from "../views/RapportsView.vue";
 import RapportDetailView from "../views/RapportDetailView.vue";
 
@@ -38,6 +39,12 @@ const routes = [
     path: "/missions/:id",
     name: "mission-detail",
     component: MissionDetailView,
+    meta: { requiresAuth: true },
+  },
+  {
+    path: "/compte",
+    name: "compte",
+    component: MonCompteView,
     meta: { requiresAuth: true },
   },
   {

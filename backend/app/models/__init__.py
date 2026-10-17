@@ -10,6 +10,7 @@ from app.models.ressources import RessourceSensible
 from app.models.securite import AlerteSecurite, Investigation, PolitiqueConformite
 from app.models.rapports import PieceJointe, RapportDifficulte, RapportMission
 from app.models.notifications import Notification
+from app.models.connexion import DemandeMotDePasse, EchecConnexion
 
 __all__ = [
     "Role", "ServiceCommune", "Utilisateur", "RessourceSensible",
@@ -19,4 +20,5 @@ __all__ = [
     "District", "Mission", "Axe", "MissionDistrict", "Equipe", "Participant",
     "TypeActivite", "Phase", "Journee", "Livrable", "IndicateurPerformance",
     "RapportMission", "RapportDifficulte", "PieceJointe","Notification",
+    "DemandeMotDePasse", "EchecConnexion",
 ]

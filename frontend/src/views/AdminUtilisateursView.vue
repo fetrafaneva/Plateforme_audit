@@ -9,11 +9,20 @@ import {
   listerServices,
   creerCompte,
   changerStatutCompte,
+  debloquerCompte,
 } from "../services/utilisateurs";
+import {
+  listerDemandes,
+  traiterDemande,
+  rejeterDemande,
+} from "../services/demandesMdp";
 
 const authStore = useAuthStore();
 
 const comptes = ref([]);
+const demandes = ref([]); // demandes de mot de passe en attente
+const motDePasseGenere = ref(null); // { nom, motDePasse } : affiché une seule fois
+const copie = ref(false);
 const roles = ref([]);
 const services = ref([]);
 const chargement = ref(true);
@@ -50,14 +59,16 @@ async function charger() {
   chargement.value = true;
   erreur.value = "";
   try {
-    const [c, r, s] = await Promise.all([
+    const [c, r, s, d] = await Promise.all([
       listerComptes(),
       listerRoles(),
       listerServices(),
+      listerDemandes("en_attente"),
     ]);
     comptes.value = c;
     roles.value = r;
     services.value = s;
+    demandes.value = d;
   } catch (e) {
     erreur.value = messageErreur(e, "Impossible de charger les comptes.");
   } finally {
@@ -135,6 +146,80 @@ async function basculerStatut(compte) {
   }
 }
 
+function estMaDemande(demande) {
+  return demande.id_utilisateur === authStore.utilisateur?.id_utilisateur;
+}
+
+async function genererMotDePasse(demande) {
+  const ok = await confirmer({
+    titre: "Générer un mot de passe",
+    message:
+      `Vérifie l'identité de ${demande.nom_utilisateur} (matricule ${demande.matricule}) avant de continuer. ` +
+      "Son mot de passe actuel sera remplacé, et le nouveau ne s'affichera qu'une seule fois.",
+    libelleConfirmer: "Générer",
+  });
+  if (!ok) return;
+  erreur.value = "";
+  message.value = "";
+  try {
+    const reponse = await traiterDemande(demande.id);
+    copie.value = false;
+    motDePasseGenere.value = {
+      nom: demande.nom_utilisateur,
+      motDePasse: reponse.mot_de_passe_temporaire,
+    };
+    await charger();
+  } catch (e) {
+    erreur.value = messageErreur(e);
+  }
+}
+
+async function refuserDemande(demande) {
+  const ok = await confirmer({
+    titre: "Rejeter la demande",
+    message: `La demande de ${demande.nom_utilisateur} sera rejetée. Son mot de passe ne change pas.`,
+    libelleConfirmer: "Rejeter",
+    danger: true,
+  });
+  if (!ok) return;
+  erreur.value = "";
+  message.value = "";
+  try {
+    await rejeterDemande(demande.id);
+    message.value = "Demande rejetée.";
+    await charger();
+  } catch (e) {
+    erreur.value = messageErreur(e);
+  }
+}
+
+async function copierMotDePasse() {
+  try {
+    await navigator.clipboard.writeText(motDePasseGenere.value.motDePasse);
+    copie.value = true;
+  } catch {
+    copie.value = false; // le presse-papiers peut être refusé : le mot de passe reste affiché
+  }
+}
+
+async function debloquer(compte) {
+  const ok = await confirmer({
+    titre: "Débloquer le compte",
+    message: `${compte.prenom} ${compte.nom} pourra de nouveau tenter de se connecter.`,
+    libelleConfirmer: "Débloquer",
+  });
+  if (!ok) return;
+  erreur.value = "";
+  message.value = "";
+  try {
+    await debloquerCompte(compte.id_utilisateur);
+    message.value = "Compte débloqué.";
+    await charger();
+  } catch (e) {
+    erreur.value = messageErreur(e);
+  }
+}
+
 onMounted(charger);
 </script>
 
@@ -160,6 +245,48 @@ onMounted(charger);
 
       <p v-if="erreur" class="alert-error">{{ erreur }}</p>
       <p v-if="message" class="message-ok">{{ message }}</p>
+
+      <section v-if="demandes.length" class="card demandes">
+        <p class="eyebrow">Demandes de mot de passe ({{ demandes.length }})</p>
+        <ul class="list-clean">
+          <li v-for="d in demandes" :key="d.id" class="demande">
+            <div>
+              <strong>{{ d.nom_utilisateur }}</strong>
+              <span class="badge badge-neutral">{{ libelle(d.role) }}</span>
+              <br />
+              <small class="muted">
+                {{ d.email }} · matricule {{ d.matricule }} · demandé le
+                {{
+                  new Date(d.date_demande).toLocaleString("fr-FR", {
+                    dateStyle: "short",
+                    timeStyle: "short",
+                  })
+                }}
+              </small>
+              <p v-if="d.motif" class="motif">« {{ d.motif }} »</p>
+            </div>
+            <div class="actions-demande">
+              <p v-if="estMaDemande(d)" class="muted petit">
+                Un autre administrateur doit traiter ta demande.
+              </p>
+              <template v-else>
+                <button
+                  class="btn btn-primary btn-sm"
+                  @click="genererMotDePasse(d)"
+                >
+                  Générer un mot de passe
+                </button>
+                <button
+                  class="btn btn-outline btn-sm"
+                  @click="refuserDemande(d)"
+                >
+                  Rejeter
+                </button>
+              </template>
+            </div>
+          </li>
+        </ul>
+      </section>
 
       <section class="card">
         <p v-if="chargement" class="muted">Chargement...</p>
@@ -194,8 +321,22 @@ onMounted(charger);
                     :class="c.statut === 'actif' ? 'badge-ok' : 'badge-off'"
                     >{{ c.statut }}</span
                   >
+                  <span
+                    v-if="c.bloque"
+                    class="badge badge-off"
+                    title="Trop d'échecs de connexion"
+                  >
+                    Bloqué
+                  </span>
                 </td>
                 <td class="cellule-actions">
+                  <button
+                    v-if="c.bloque"
+                    class="btn btn-primary btn-sm"
+                    @click="debloquer(c)"
+                  >
+                    Débloquer
+                  </button>
                   <button
                     class="btn btn-outline btn-sm"
                     :disabled="
@@ -301,6 +442,35 @@ onMounted(charger);
         </div>
       </form>
     </ModalDialog>
+
+    <ModalDialog
+      v-if="motDePasseGenere"
+      titre="Mot de passe temporaire"
+      @fermer="motDePasseGenere = null"
+    >
+      <p>
+        Nouveau mot de passe de <strong>{{ motDePasseGenere.nom }}</strong
+        >. Communique-le-lui directement : il ne sera
+        <strong>plus affiché</strong> après la fermeture de cette fenêtre.
+      </p>
+      <p class="mdp-affiche">{{ motDePasseGenere.motDePasse }}</p>
+      <div class="modal-actions">
+        <button
+          type="button"
+          class="btn btn-outline btn-sm"
+          @click="copierMotDePasse"
+        >
+          {{ copie ? "Copié" : "Copier" }}
+        </button>
+        <button
+          type="button"
+          class="btn btn-primary btn-sm"
+          @click="motDePasseGenere = null"
+        >
+          J'ai noté le mot de passe
+        </button>
+      </div>
+    </ModalDialog>
   </div>
 </template>
 
@@ -355,5 +525,54 @@ onMounted(charger);
   justify-content: flex-end;
   gap: 0.6rem;
   margin-top: 1.2rem;
+}
+
+.demandes {
+  border-color: #f3d29a;
+}
+
+.demande {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.8rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.demande:last-child {
+  border-bottom: none;
+}
+
+.motif {
+  margin: 0.3rem 0 0;
+  font-size: 0.88rem;
+  font-style: italic;
+}
+
+.actions-demande {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.petit {
+  margin: 0;
+  font-size: 0.82rem;
+}
+
+.mdp-affiche {
+  margin: 1rem 0;
+  padding: 1rem;
+  background: var(--bg-soft);
+  border: 1px dashed var(--violet);
+  border-radius: 14px;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 1.4rem;
+  letter-spacing: 0.08em;
+  text-align: center;
+  user-select: all;
 }
 </style>

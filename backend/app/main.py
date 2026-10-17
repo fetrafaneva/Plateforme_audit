@@ -12,6 +12,8 @@ from app.api.service import router as service_router
 from app.api.rapports import router as rapports_router
 from app.api.notifications import router as notifications_router
 from app.api.referentiels import router as referentiels_router
+from app.api.demandes_mdp import router as demandes_mdp_router
+
 
 from app.api.missions import (
     router as missions_router,
@@ -65,6 +67,7 @@ app.include_router(service_router)
 app.include_router(rapports_router)
 app.include_router(notifications_router)
 app.include_router(referentiels_router)
+app.include_router(demandes_mdp_router)
 
 @app.get("/health")
 def health_check():

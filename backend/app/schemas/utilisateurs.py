@@ -36,6 +36,7 @@ class CompteOut(BaseModel):
     role: str
     service: str
     statut: str
+    bloque: bool = False  # trop d'échecs de connexion récents
 
 
 class StatutCompteUpdate(BaseModel):
