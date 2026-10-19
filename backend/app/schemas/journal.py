@@ -1,12 +1,18 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel
 
 
 class JournalEntryCreate(BaseModel):
+    """Corps de POST /journal/acces.
+
+    Pas d'adresse IP ici : le serveur la relève lui-même sur la connexion. Si un ancien
+    client en envoie encore une, elle est ignorée.
+    """
+
     id_ressource: int
-    type_action: str  # consultation, modification, export
-    adresse_ip: str
+    type_action: Literal["consultation", "modification", "export"]
 
 
 class JournalEntryOut(BaseModel):

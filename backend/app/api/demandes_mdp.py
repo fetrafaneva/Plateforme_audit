@@ -20,6 +20,7 @@ from app.core.connexion import effacer_echecs, normaliser_email
 from app.core.journal import ajouter_entree, obtenir_id_ressource
 from app.core.mots_de_passe import generer_mot_de_passe
 from app.core.notifications import notifier, notifier_administrateurs
+from app.core.reseau import ip_du_client
 from app.core.security import hash_password
 from app.db.base import get_db
 from app.models.connexion import DemandeMotDePasse
@@ -215,7 +216,7 @@ def traiter_demande(
         current_user.id_utilisateur,
         id_ressource,
         "modification",
-        request.client.host if request.client else "inconnue",
+        ip_du_client(request),
     )
     db.commit()
     return MotDePasseTemporaireOut(mot_de_passe_temporaire=mot_de_passe)
