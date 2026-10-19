@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session, joinedload
 
 from app.api.deps import get_current_user, require_role
+from app.core.connexion import effacer_echecs, emails_bloques, normaliser_email
 from app.db.base import get_db
 from app.models.identity import Role, ServiceCommune, Utilisateur
 from app.schemas.utilisateurs import (
@@ -17,7 +18,7 @@ router = APIRouter(prefix="/utilisateurs", tags=["utilisateurs"])
 ADMIN_SEUL = [Depends(require_role("administrateur"))]
 
 
-def _compte_out(u: Utilisateur) -> CompteOut:
+def _compte_out(u: Utilisateur, bloque: bool = False) -> CompteOut:
     return CompteOut(
         id_utilisateur=u.id_utilisateur,
         nom=u.nom,
@@ -27,6 +28,7 @@ def _compte_out(u: Utilisateur) -> CompteOut:
         role=u.role.nom_role,
         service=u.service.nom_service,
         statut=u.statut,
+        bloque=bloque,
     )
 
 
@@ -71,7 +73,8 @@ def lister_comptes(db: Session = Depends(get_db)):
         .order_by(Utilisateur.nom, Utilisateur.prenom)
         .all()
     )
-    return [_compte_out(u) for u in comptes]
+    bloques = emails_bloques(db)
+    return [_compte_out(u, normaliser_email(u.email) in bloques) for u in comptes]
 
 
 @router.get("/roles", response_model=list[RoleOut], dependencies=ADMIN_SEUL)
@@ -100,4 +103,15 @@ def modifier_statut(
     utilisateur.statut = payload.statut
     db.commit()
     db.refresh(utilisateur)
+    return _compte_out(utilisateur)
+
+
+@router.post("/{id_utilisateur}/debloquer", response_model=CompteOut, dependencies=ADMIN_SEUL)
+def debloquer_compte(id_utilisateur: int, db: Session = Depends(get_db)):
+    """Remet à zéro les échecs de connexion d'un compte bloqué."""
+    utilisateur = db.get(Utilisateur, id_utilisateur)
+    if utilisateur is None:
+        raise HTTPException(status_code=404, detail="Utilisateur introuvable")
+    effacer_echecs(db, normaliser_email(utilisateur.email))
+    db.commit()
     return _compte_out(utilisateur)

@@ -1,11 +1,19 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+import math
+
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, require_role
+from app.core.connexion import (
+    effacer_echecs,
+    enregistrer_echec,
+    normaliser_email,
+    secondes_avant_deblocage,
+)
 from app.core.security import create_access_token, hash_password, verify_password
 from app.db.base import get_db
 from app.models.identity import Role, ServiceCommune, Utilisateur
-from app.schemas.auth import Token, UserCreate, UserLogin, UserOut, UserMeOut
+from app.schemas.auth import Token, UserCreate, UserLogin, UserMeOut, UserOut
 
 router = APIRouter(prefix="/auth", tags=["authentification"])
 
@@ -17,7 +25,6 @@ router = APIRouter(prefix="/auth", tags=["authentification"])
     dependencies=[Depends(require_role("administrateur"))],
 )
 def register(payload: UserCreate, db: Session = Depends(get_db)):
-    ...
     existing = db.query(Utilisateur).filter(Utilisateur.email == payload.email).first()
     if existing:
         raise HTTPException(status_code=400, detail="Cet email est déjà utilisé")
@@ -45,10 +52,29 @@ def register(payload: UserCreate, db: Session = Depends(get_db)):
 
 
 @router.post("/login", response_model=Token)
-def login(payload: UserLogin, db: Session = Depends(get_db)):
+def login(payload: UserLogin, request: Request, db: Session = Depends(get_db)):
+    email = normaliser_email(payload.email)
+    adresse_ip = request.client.host if request.client else "inconnue"
+
+    # Trop d'échecs récents : on refuse avant même de regarder le mot de passe.
+    attente = secondes_avant_deblocage(db, email, adresse_ip)
+    if attente > 0:
+        minutes = max(1, math.ceil(attente / 60))
+        raise HTTPException(
+            status_code=429,
+            detail=f"Trop de tentatives de connexion. Réessaie dans {minutes} minute(s).",
+            headers={"Retry-After": str(attente)},
+        )
+
     user = db.query(Utilisateur).filter(Utilisateur.email == payload.email).first()
     if not user or not verify_password(payload.mot_de_passe, user.mot_de_passe_hash):
+        enregistrer_echec(db, email, adresse_ip)
+        db.commit()
+        # Même message que l'adresse existe ou non : on ne révèle pas les comptes.
         raise HTTPException(status_code=401, detail="Email ou mot de passe incorrect")
+
+    effacer_echecs(db, email)
+    db.commit()
     if user.statut != "actif":
         raise HTTPException(status_code=403, detail="Compte désactivé")
 

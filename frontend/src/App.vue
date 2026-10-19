@@ -70,6 +70,7 @@ onMounted(async () => {
         <RouterLink v-if="estAdmin" to="/admin/referentiels"
           >Référentiels</RouterLink
         >
+        <RouterLink to="/compte">Mon compte</RouterLink>
         <NotificationBell />
         <button class="btn btn-outline btn-sm" @click="seDeconnecter">
           Déconnexion

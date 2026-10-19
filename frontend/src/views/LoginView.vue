@@ -2,6 +2,8 @@
 import { ref } from "vue";
 import { useRouter } from "vue-router";
 import { useAuthStore } from "../stores/auth";
+import ModalDialog from "../components/ModalDialog.vue";
+import { demanderSansConnexion } from "../services/demandesMdp";
 
 const email = ref("");
 const motDePasse = ref("");
@@ -18,9 +20,52 @@ async function seConnecter() {
     await authStore.login(email.value, motDePasse.value);
     router.push({ name: "dashboard" });
   } catch (e) {
+    // 401 : identifiants incorrects ; 429 : trop de tentatives (le message dit combien attendre)
     erreur.value = e.response?.data?.detail || "Identifiants incorrects.";
   } finally {
     chargement.value = false;
+  }
+}
+
+// ---------- Demande de nouveau mot de passe (traitée par l'administrateur) ----------
+
+const demandeOuverte = ref(false);
+const demandeEmail = ref("");
+const demandeMatricule = ref("");
+const demandeMotif = ref("");
+const demandeEnvoi = ref(false);
+const demandeErreur = ref("");
+const demandeAccuse = ref("");
+
+function ouvrirDemande() {
+  demandeEmail.value = email.value; // reprend l'adresse déjà saisie
+  demandeMatricule.value = "";
+  demandeMotif.value = "";
+  demandeErreur.value = "";
+  demandeAccuse.value = "";
+  demandeOuverte.value = true;
+}
+
+async function envoyerDemande() {
+  demandeErreur.value = "";
+  demandeEnvoi.value = true;
+  try {
+    const reponse = await demanderSansConnexion({
+      email: demandeEmail.value.trim(),
+      matricule: demandeMatricule.value.trim(),
+      motif: demandeMotif.value.trim() || null,
+    });
+    demandeAccuse.value = reponse.message;
+  } catch (e) {
+    const detail = e.response?.data?.detail;
+    demandeErreur.value =
+      typeof detail === "string"
+        ? detail
+        : Array.isArray(detail) && detail.length
+        ? detail.map((d) => d.msg).join(" ; ")
+        : "L'envoi de la demande a échoué.";
+  } finally {
+    demandeEnvoi.value = false;
   }
 }
 </script>
@@ -70,7 +115,77 @@ async function seConnecter() {
           {{ chargement ? "Connexion..." : "Se connecter" }}
         </button>
       </form>
+
+      <button type="button" class="lien-secondaire" @click="ouvrirDemande">
+        Mot de passe oublié ou à changer ?
+      </button>
     </div>
+
+    <ModalDialog
+      v-if="demandeOuverte"
+      titre="Demander un nouveau mot de passe"
+      @fermer="demandeOuverte = false"
+    >
+      <template v-if="demandeAccuse">
+        <p class="accuse">{{ demandeAccuse }}</p>
+        <div class="actions-modale">
+          <button
+            type="button"
+            class="btn btn-primary btn-sm"
+            @click="demandeOuverte = false"
+          >
+            Fermer
+          </button>
+        </div>
+      </template>
+
+      <form v-else @submit.prevent="envoyerDemande">
+        <p class="muted">
+          Le mot de passe est changé par l'administrateur, qui te le communique
+          directement. Indique ton adresse et ton matricule pour qu'il puisse
+          t'identifier.
+        </p>
+        <p v-if="demandeErreur" class="alert-error">{{ demandeErreur }}</p>
+        <div class="field">
+          <label for="d-email">Email</label>
+          <input id="d-email" v-model="demandeEmail" type="email" required />
+        </div>
+        <div class="field">
+          <label for="d-matricule">Matricule</label>
+          <input
+            id="d-matricule"
+            v-model="demandeMatricule"
+            required
+            maxlength="30"
+          />
+        </div>
+        <div class="field">
+          <label for="d-motif">Motif (facultatif)</label>
+          <input
+            id="d-motif"
+            v-model="demandeMotif"
+            maxlength="300"
+            placeholder="ex : mot de passe oublié"
+          />
+        </div>
+        <div class="actions-modale">
+          <button
+            type="button"
+            class="btn btn-outline btn-sm"
+            @click="demandeOuverte = false"
+          >
+            Annuler
+          </button>
+          <button
+            type="submit"
+            class="btn btn-primary btn-sm"
+            :disabled="demandeEnvoi"
+          >
+            {{ demandeEnvoi ? "Envoi..." : "Envoyer la demande" }}
+          </button>
+        </div>
+      </form>
+    </ModalDialog>
   </div>
 </template>
 
@@ -127,8 +242,33 @@ async function seConnecter() {
 }
 
 .lien-secondaire {
-  display: inline-block;
   margin-top: 1.5rem;
+  padding: 0;
+  background: none;
+  border: none;
+  font: inherit;
   font-size: 0.9rem;
+  color: var(--violet);
+  cursor: pointer;
+}
+
+.lien-secondaire:hover {
+  text-decoration: underline;
+}
+
+.accuse {
+  margin: 0 0 1rem;
+  padding: 0.8rem 1rem;
+  background: #d5faf5;
+  color: #067a6f;
+  border: 1px solid #a8efe6;
+  border-radius: 14px;
+}
+
+.actions-modale {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.6rem;
+  margin-top: 1.2rem;
 }
 </style>

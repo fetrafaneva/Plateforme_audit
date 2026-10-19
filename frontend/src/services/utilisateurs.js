@@ -10,3 +10,5 @@ export const creerCompte = (payload) =>
   api.post("/auth/register", payload).then(data);
 export const changerStatutCompte = (id, statut) =>
   api.patch(`/utilisateurs/${id}/statut`, { statut }).then(data);
+export const debloquerCompte = (id) =>
+  api.post(`/utilisateurs/${id}/debloquer`).then(data);
