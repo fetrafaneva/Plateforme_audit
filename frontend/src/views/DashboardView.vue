@@ -2,7 +2,6 @@
 import { ref, computed, onMounted } from "vue";
 import { useAuthStore } from "../stores/auth";
 import { listerMissions } from "../services/missions";
-import RapportsCompteurs from "../components/RapportsCompteurs.vue";
 
 const authStore = useAuthStore();
 const missions = ref([]);
@@ -10,7 +9,11 @@ const chargementMissions = ref(true);
 
 onMounted(async () => {
   if (!authStore.utilisateur) {
-    authStore.chargerUtilisateur();
+    try {
+      await authStore.chargerUtilisateur();
+    } catch {
+      /* l'intercepteur gère le 401 */
+    }
   }
   try {
     missions.value = await listerMissions();
@@ -35,6 +38,10 @@ const dernieres = computed(() => [...missions.value].reverse().slice(0, 3));
 
 function initiales(u) {
   return `${u.prenom?.[0] ?? ""}${u.nom?.[0] ?? ""}`.toUpperCase() || "?";
+}
+
+function libelleRole(valeur) {
+  return (valeur || "").replaceAll("_", " ");
 }
 
 function classeStatut(statut) {
@@ -63,7 +70,6 @@ function classeStatut(statut) {
     </header>
 
     <main class="container page">
-      <RapportsCompteurs />
       <section class="stats">
         <div class="card card-hover stat">
           <span class="stat-valeur">{{
@@ -109,18 +115,22 @@ function classeStatut(statut) {
               <p class="muted" style="margin: 0">
                 Matricule {{ authStore.utilisateur.matricule }}
               </p>
-              <span
-                v-if="authStore.utilisateur.statut"
-                class="badge"
-                :class="
-                  authStore.utilisateur.statut === 'actif'
-                    ? 'badge-ok'
-                    : 'badge-off'
-                "
-                style="margin-top: 0.6rem"
-              >
-                {{ authStore.utilisateur.statut }}
-              </span>
+              <p class="badges-profil">
+                <span class="badge badge-neutral">{{
+                  libelleRole(authStore.utilisateur.role)
+                }}</span>
+                <span
+                  v-if="authStore.utilisateur.statut"
+                  class="badge"
+                  :class="
+                    authStore.utilisateur.statut === 'actif'
+                      ? 'badge-ok'
+                      : 'badge-off'
+                  "
+                >
+                  {{ authStore.utilisateur.statut }}
+                </span>
+              </p>
             </div>
           </div>
           <p v-else class="muted">Chargement du profil...</p>
@@ -201,6 +211,13 @@ function classeStatut(statut) {
   width: 64px;
   height: 64px;
   font-size: 1.3rem;
+}
+
+.badges-profil {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0.6rem 0 0;
 }
 
 .ligne-mission {
