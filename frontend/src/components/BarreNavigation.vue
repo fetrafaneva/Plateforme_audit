@@ -132,7 +132,7 @@ onBeforeUnmount(() => {
   <header class="topbar">
     <div class="container topbar-inner">
       <RouterLink to="/" class="logo">
-        <span class="logo-mark">a</span>
+        <img src="/logo.png" alt="Logo MID" class="logo-mark" />
         Plateforme MID
       </RouterLink>
 
