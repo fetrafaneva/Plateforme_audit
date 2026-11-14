@@ -28,6 +28,7 @@ from app.api.deps import get_current_user, require_role
 from app.core.config import settings
 from app.core.journal import ajouter_entree, obtenir_id_ressource
 from app.core.notifications import notifier, notifier_administrateurs
+from app.core.reseau import ip_du_client
 from app.core.pdf_rapport import construire_pdf
 from app.db.base import get_db
 from app.models.identity import Utilisateur
@@ -112,10 +113,6 @@ def _role(user: Utilisateur) -> str:
     return user.role.nom_role
 
 
-def _ip(request: Request) -> str:
-    return request.client.host if request.client else "inconnue"
-
-
 def _maintenant() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -126,7 +123,7 @@ def _dossier_base() -> Path:
 
 def _journaliser(db: Session, user: Utilisateur, type_action: str, request: Request) -> None:
     id_ressource = obtenir_id_ressource(db, RESSOURCE_RAPPORTS, "moyen", user.id_service)
-    ajouter_entree(db, user.id_utilisateur, id_ressource, type_action, _ip(request))
+    ajouter_entree(db, user.id_utilisateur, id_ressource, type_action, ip_du_client(request))
 
 
 def _charger(db: Session, id_rapport: int) -> RapportMission:

@@ -1,311 +1,756 @@
-"""Réinitialise la base `audit_comportemental` et y insère un jeu de données de démonstration.
-
-Usage, depuis le dossier backend/ avec le venv activé :
-    python -m scripts.seed_demo
-
-ATTENTION : efface TOUTES les données des tables de l'application, y compris
-celles du module d'audit. Les mots de passe ci-dessous sont des mots de passe
-de démonstration : à ne jamais utiliser sur une plateforme déployée en ligne.
-Les noms de personnes et les valeurs de résultats sont fictifs.
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
-from datetime import date, datetime
+seed_demo.py - Banque de données de démonstration pour la Plateforme d'audit (MID)
 
-from sqlalchemy import text
+Génère des données cohérentes pour les deux modules :
+  - gestion des missions (missions, axes, équipes, districts, phases, journées, rapports...)
+  - audit comportemental (journal d'accès, profils, scores, alertes, investigations...)
 
-import app.models  # noqa: F401  (enregistre toutes les tables sur Base.metadata)
-from app.core.security import hash_password
-from app.db.base import Base, SessionLocal, engine
-from app.models.identity import Role, ServiceCommune, Utilisateur
-from app.models.missions import (
-    Axe,
-    District,
-    Equipe,
-    IndicateurPerformance,
-    Journee,
-    Livrable,
-    Mission,
-    MissionDistrict,
-    Participant,
-    Phase,
-    TypeActivite,
-)
+Utilisation (PowerShell) :
+  python seed_demo.py              -> simulation : génère en mémoire, vérifie la cohérence, n'écrit rien
+  python seed_demo.py --inspect    -> affiche les valeurs réellement utilisées dans ta base (statuts, rôles...)
+  python seed_demo.py --apply      -> VIDE les tables de données puis insère la démo (demande confirmation)
 
-BASE_ATTENDUE = "audit_comportemental"
-MOT_DE_PASSE_DEMO = "Demo2026!"
+La table alembic_version n'est jamais touchée. Les rôles existants (roles_permissions) sont conservés.
+Le mot de passe de tous les comptes de démo est : Demo@2026
+"""
+import argparse
+import getpass
+import hashlib
+import os
+import random
+import sys
+from collections import defaultdict
+from datetime import date, datetime, timedelta, timezone
+
+# --------------------------------------------------------------------------------------
+# 1) VALEURS À VÉRIFIER AVEC  `python seed_demo.py --inspect`
+#    (je ne connais pas les valeurs exactes attendues par ton application : adapte ici)
+# --------------------------------------------------------------------------------------
+DEMO_PASSWORD = "Demo@2026"
+
+S = {
+    "user": "actif",
+    "mission": {"T": "terminee", "E": "en_cours", "P": "planifiee"},
+    "district": {"T": "terminee", "E": "en_cours", "P": "planifiee"},
+    "phase": {"T": "terminee", "E": "en_cours", "P": "planifiee"},
+    "journee": {"T": "realisee", "E": "en_cours", "P": "planifiee"},
+    "rapport": {"brouillon": "brouillon", "soumis": "soumis", "valide": "valide", "rejete": "rejete"},
+    "demande": {"attente": "en_attente", "traitee": "traitee"},
+    "alerte": {"ouverte": "ouverte", "en_cours": "en_cours", "cloturee": "cloturee"},
+    "investigation": {"en_cours": "en_cours", "cloturee": "cloturee"},
+    "gravite": {"moyenne": "moyenne", "haute": "haute", "critique": "critique"},
+    "service": {"ministere": "ministere", "direction": "direction", "service": "service"},
+    "niveau": {"critique": "critique", "eleve": "eleve", "moyen": "moyen", "faible": "faible"},
+}
+ROLES_NIVEAU = {  # utilisé seulement si un rôle manque dans roles_permissions
+    "administrateur": "admin", "chef_mission": "standard", "technicien": "standard",
+    "agent": "standard", "auditeur": "audit", "responsable_hierarchique": "standard",
+}
+
+# --------------------------------------------------------------------------------------
+# 2) Constantes générales
+# --------------------------------------------------------------------------------------
+random.seed(2026)  # résultats reproductibles
+TZ = timezone(timedelta(hours=3))  # heure de Madagascar
+NOW = datetime.now(TZ).replace(microsecond=0)
+TODAY = NOW.date()
 
 
-def effacer(db):
-    """Vide toutes les tables déclarées dans les modèles (alembic_version n'est pas touchée)."""
-    noms = [t.name for t in Base.metadata.sorted_tables]
-    liste = ", ".join(f'"{nom}"' for nom in noms)
-    db.execute(text(f"TRUNCATE TABLE {liste} RESTART IDENTITY CASCADE"))
+def at(d, h=9, m=0):
+    return datetime(d.year, d.month, d.day, h, m, tzinfo=TZ)
 
 
-def ajouter(db, objet):
-    db.add(objet)
-    db.flush()
-    return objet
+def naive(d, h=0):
+    return datetime(d.year, d.month, d.day, h, 0)
 
 
-def semer(db):
-    # ---------- Rôles ----------
-    roles = {}
-    for nom, niveau in [
-        ("administrateur", "total"),
-        ("chef_mission", "mission"),
-        ("technicien", "mission"),
-        ("agent", "standard"),
-        ("auditeur", "audit"),
-        ("responsable_hierarchique", "supervision"),
-    ]:
-        roles[nom] = ajouter(db, Role(nom_role=nom, niveau_acces=niveau))
+# Ordre de dépendance des tables (parents avant enfants) et nom de la clé primaire
+PK = {
+    "roles_permissions": "id_role", "services_communes": "id_service", "utilisateurs": "id_utilisateur",
+    "districts": "id", "types_activite": "id", "missions": "id", "axes": "id", "equipes": "id",
+    "participants": "id", "missions_districts": "id", "phases": "id", "livrables": "id",
+    "journees": "id", "indicateurs_performance": "id", "rapports_mission": "id",
+    "rapport_difficultes": "id", "notifications": "id", "demandes_mot_de_passe": "id",
+    "echecs_connexion": "id", "politiques_conformite": "id_politique",
+    "ressources_sensibles": "id_ressource", "profils_comportementaux": "id_profil",
+    "journal_acces": "id_entree", "scores_anomalie": "id_score", "alertes_securite": "id_alerte",
+    "investigations": "id_investigation", "benchmarking_services": "id_benchmark",
+    "rapports_audit": "id_rapport",
+}
+# Tables vidées avant insertion (roles_permissions est conservée, alembic_version aussi)
+TO_TRUNCATE = [t for t in PK if t != "roles_permissions"] + ["pieces_jointes"]
 
-    # ---------- Services ----------
-    mid = ajouter(db, ServiceCommune(
-        nom_service="Ministère de l'Intérieur et de la Décentralisation", type="ministere"))
-    dsid = ajouter(db, ServiceCommune(
-        nom_service="Direction du Système d'Information et de la Digitalisation",
-        type="ministere", id_service_parent=mid.id_service))
-    dgddl = ajouter(db, ServiceCommune(
-        nom_service="Direction Générale de la Décentralisation et du Développement Local",
-        type="ministere", id_service_parent=mid.id_service))
-    dist_ambovombe = ajouter(db, ServiceCommune(
-        nom_service="District d'Ambovombe", type="district",
-        id_service_parent=dgddl.id_service))
+FK = {
+    ("utilisateurs", "id_service"): "services_communes", ("utilisateurs", "id_role"): "roles_permissions",
+    ("services_communes", "id_service_parent"): "services_communes",
+    ("axes", "mission_id"): "missions", ("equipes", "axe_id"): "axes",
+    ("participants", "equipe_id"): "equipes", ("participants", "id_utilisateur"): "utilisateurs",
+    ("missions_districts", "axe_id"): "axes", ("missions_districts", "district_id"): "districts",
+    ("phases", "mission_district_id"): "missions_districts", ("phases", "type_activite_id"): "types_activite",
+    ("livrables", "phase_id"): "phases", ("journees", "mission_district_id"): "missions_districts",
+    ("indicateurs_performance", "mission_id"): "missions",
+    ("rapports_mission", "axe_id"): "axes", ("rapports_mission", "id_auteur"): "utilisateurs",
+    ("rapports_mission", "id_validateur"): "utilisateurs",
+    ("rapport_difficultes", "id_rapport"): "rapports_mission",
+    ("notifications", "id_utilisateur"): "utilisateurs",
+    ("demandes_mot_de_passe", "id_utilisateur"): "utilisateurs",
+    ("demandes_mot_de_passe", "id_traitant"): "utilisateurs",
+    ("ressources_sensibles", "id_service_proprietaire"): "services_communes",
+    ("profils_comportementaux", "id_utilisateur"): "utilisateurs",
+    ("journal_acces", "id_utilisateur"): "utilisateurs", ("journal_acces", "id_ressource"): "ressources_sensibles",
+    ("scores_anomalie", "id_entree_journal"): "journal_acces",
+    ("scores_anomalie", "id_profil_reference"): "profils_comportementaux",
+    ("alertes_securite", "id_score"): "scores_anomalie", ("alertes_securite", "id_politique"): "politiques_conformite",
+    ("investigations", "id_alerte"): "alertes_securite", ("investigations", "id_enqueteur"): "utilisateurs",
+    ("benchmarking_services", "id_service"): "services_communes", ("rapports_audit", "id_service"): "services_communes",
+}
 
-    # ---------- Utilisateurs ----------
-    mdp_hash = hash_password(MOT_DE_PASSE_DEMO)
-    definitions = [
-        ("Faneva", "Fetra", "faneva@gmail.com", "1174 H-F", "administrateur", dsid),
-        ("Rakoto", "Hery", "chef@test.mg", "CHEF001", "chef_mission", dsid),
-        ("Randria", "Mamy", "tech@test.mg", "TECH001", "technicien", dsid),
-        ("Razafy", "Tiana", "agent@test.mg", "AGT001", "agent", dist_ambovombe),
-        ("Rabe", "Fanja", "auditeur@test.mg", "AUD001", "auditeur", dsid),
-        ("Ravelo", "Mahefa", "responsable@test.mg", "RESP001", "responsable_hierarchique", dgddl),
-    ]
-    utilisateurs = {}
-    for nom, prenom, email, matricule, role, service in definitions:
-        utilisateurs[role] = ajouter(db, Utilisateur(
-            nom=nom, prenom=prenom, email=email, matricule=matricule,
-            mot_de_passe_hash=mdp_hash,
-            id_service=service.id_service, id_role=roles[role].id_role,
-            statut="actif",
-        ))
-    chef = utilisateurs["chef_mission"]
-    tech = utilisateurs["technicien"]
 
-    # ---------- Types d'activité ----------
-    types = {}
-    for libelle in [
-        "Installation du serveur",
-        "Formation à l'administration serveur",
-        "Formation SII CSB et gestion des documents",
-        "Déploiement du logiciel",
-        "Installation de générateur solaire",
-    ]:
-        types[libelle] = ajouter(db, TypeActivite(libelle=libelle))
+class Store:
+    """Accumule les lignes en mémoire, avec des identifiants explicites."""
 
-    # ---------- Districts (les 16 districts cibles du TDR SII CSB) ----------
-    # La région d'Antanimora n'est pas renseignée : à vérifier avant publication.
-    districts = {}
-    for nom, region in [
-        ("Toliara I", "Atsimo-Andrefana"), ("Toliara II", "Atsimo-Andrefana"),
-        ("Morombe", "Atsimo-Andrefana"), ("Ankazoabo", "Atsimo-Andrefana"),
-        ("Beroroha", "Atsimo-Andrefana"), ("Betioky", "Atsimo-Andrefana"),
-        ("Ampanihy", "Atsimo-Andrefana"), ("Benenitra", "Atsimo-Andrefana"),
-        ("Taolagnaro", "Anosy"), ("Amboasary", "Anosy"), ("Betroka", "Anosy"),
-        ("Antanimora", None),
-        ("Ambovombe", "Androy"), ("Tsihombe", "Androy"),
-        ("Beloha", "Androy"), ("Bekily", "Androy"),
-    ]:
-        districts[nom] = ajouter(db, District(nom=nom, region=region, province="Toliara"))
+    def __init__(self):
+        self.rows = {t: [] for t in PK}
+        self.ids = {t: set() for t in PK}
+        self.next = defaultdict(lambda: 1)
+        self.cols = {}
 
-    # ---------- Mission 1 : déploiement SII CSB (terminée) ----------
-    m1 = ajouter(db, Mission(
-        titre="Opérationnalisation des serveurs districts et déploiement du SII CSB",
-        type_mission="deploiement_serveur",
-        date_debut=datetime(2026, 9, 5), date_fin_prevue=datetime(2026, 10, 4),
-        statut="terminee"))
+    def add(self, table, **row):
+        rid = self.next[table]
+        self.next[table] += 1
+        row = {PK[table]: rid, **row}
+        cols = tuple(sorted(row))
+        if self.cols.setdefault(table, cols) != cols:
+            raise ValueError(f"Colonnes incohérentes pour {table}")
+        self.rows[table].append(row)
+        self.ids[table].add(rid)
+        return rid
 
-    axes_m1 = [
-        (1, "Tanà → Toliara → Morombe → Ankazoabo → Beroroha → Tanà",
-         ["Toliara II", "Morombe", "Ankazoabo", "Beroroha"],
-         [("DSID", [
-             ("Rakoto Hery", "Chef de mission / Coordinateur technique", chef),
-             ("Randria Mamy", "Technicien infrastructure serveur", tech),
-             ("Rasoanaivo Lova", "Technicien réseau", None)]),
-          ("SI CSB", [("Andrianina Solo", "Formateur certifié SII CSB", None)])]),
-        (2, "Tanà → Toliara → Betioky → Ampanihy → Benenitra → Tanà",
-         ["Toliara I", "Betioky", "Ampanihy", "Benenitra"],
-         [("DSID", [
-             ("Rakotomalala Njaka", "Chef de mission / Coordinateur technique", None),
-             ("Rasolofo Tahiry", "Technicien infrastructure serveur", None),
-             ("Ranaivo Lalaina", "Technicien réseau", None)])]),
-        (3, "Tanà → Taolagnaro → Amboasary → Antanimora → Betroka → Tanà",
-         ["Taolagnaro", "Amboasary", "Antanimora", "Betroka"],
-         [("DSID", [
-             ("Randrianasolo Fidy", "Chef de mission", None),
-             ("Razanakoto Nirina", "Technicien réseau", None)]),
-          ("MATSF", [("Rabemanana Tsiory", "Technicien infrastructure serveur", None)])]),
-        (4, "Tanà → Ambovombe → Tsihombe → Beloha → Bekily → Tanà",
-         ["Ambovombe", "Tsihombe", "Beloha", "Bekily"],
-         [("DSID", [
-             ("Rasamimanana Hanta", "Chef de mission", None),
-             ("Ratsimba Koloina", "Technicien réseau", None)]),
-          ("INDDL", [("Randriamihaja Zo", "Formateur", None)])]),
-    ]
+    def register_existing(self, table, rid):
+        self.ids[table].add(rid)
 
-    md_ambovombe = None
-    for numero, itineraire, noms_districts, equipes in axes_m1:
-        axe = ajouter(db, Axe(
-            mission_id=m1.id, numero_axe=numero, itineraire_principal=itineraire))
-        for ordre, nom_district in enumerate(noms_districts, start=1):
-            md = ajouter(db, MissionDistrict(
-                axe_id=axe.id, district_id=districts[nom_district].id,
-                ordre_visite=ordre, statut="termine"))
-            if nom_district == "Ambovombe":
-                md_ambovombe = md
-        for type_equipe, participants in equipes:
-            equipe = ajouter(db, Equipe(axe_id=axe.id, type_equipe=type_equipe))
-            for nom, fonction, compte in participants:
-                ajouter(db, Participant(
-                    equipe_id=equipe.id, nom=nom, fonction=fonction,
-                    id_utilisateur=compte.id_utilisateur if compte else None))
 
-    # Séquence d'intervention détaillée pour Ambovombe (phases, journées, livrables)
-    phases = []
-    for ordre, (type_libelle, duree, livrable) in enumerate([
-        ("Installation du serveur", "J1-J2", "Serveur branché, alimenté, configuré et sécurisé"),
-        ("Formation à l'administration serveur", "J3-J4", "PV de formation signé"),
-        ("Déploiement du logiciel", "J5", "Logiciel déployé et fonctionnel"),
-    ], start=1):
-        phases.append(ajouter(db, Phase(
-            mission_district_id=md_ambovombe.id,
-            type_activite_id=types[type_libelle].id,
-            numero_ordre=ordre, duree_prevue=duree,
-            livrable_attendu=livrable, statut="terminee")))
+# --------------------------------------------------------------------------------------
+# 3) Données de référence
+# --------------------------------------------------------------------------------------
+PRENOMS = ["Hery", "Tahina", "Faly", "Mamy", "Nirina", "Voahangy", "Lalaina", "Soa", "Haingo", "Fanja",
+           "Rivo", "Toky", "Andry", "Miora", "Nomena", "Sitraka", "Tiana", "Zo", "Lova", "Aina", "Mialy",
+           "Rojo", "Njaka", "Fidy", "Vola", "Hanitra", "Ony", "Tsiory", "Mahefa", "Bakoly"]
+NOMS = ["Rakotoarisoa", "Randrianarivelo", "Rasolofonirina", "Razafindrakoto", "Andrianasolo",
+        "Ratsimbazafy", "Rabemananjara", "Rakotomalala", "Randriamampionona", "Ravelojaona", "Rasoanaivo",
+        "Andriamanantena", "Razanamahefa", "Rakotonirina", "Ramanantsoa", "Randrianasolo", "Rajaonarison",
+        "Raharimanana", "Rafanomezantsoa", "Andrianjafy"]
 
-    for jour in range(1, 6):
-        ajouter(db, Journee(
-            mission_district_id=md_ambovombe.id, numero_jour=jour,
-            date=date(2026, 9, 9 + jour), lieu="Ambovombe", statut="realisee"))
+DEMO_LOGINS = {  # un compte facile à retenir par rôle
+    "administrateur": ("Hery", "Rakotoarisoa", "admin"),
+    "chef_mission": ("Tahina", "Randrianarivelo", "chef"),
+    "technicien": ("Faly", "Rasolofonirina", "technicien"),
+    "agent": ("Voahangy", "Razafindrakoto", "agent"),
+    "auditeur": ("Mamy", "Andrianasolo", "auditeur"),
+    "responsable_hierarchique": ("Lalaina", "Ratsimbazafy", "responsable"),
+}
 
-    ajouter(db, Livrable(
-        phase_id=phases[0].id, type_livrable="PV d'installation du serveur",
-        date_production=datetime(2026, 9, 11), signe=True))
-    ajouter(db, Livrable(
-        phase_id=phases[1].id, type_livrable="PV de formation signé",
-        date_production=datetime(2026, 9, 13), signe=True))
+DISTRICTS = {
+    "Ambatolampy": ("Vakinankaratra", "Antananarivo", True), "Antsirabe I": ("Vakinankaratra", "Antananarivo", True),
+    "Ambositra": ("Amoron'i Mania", "Fianarantsoa", True), "Fianarantsoa I": ("Haute Matsiatra", "Fianarantsoa", True),
+    "Arivonimamo": ("Itasy", "Antananarivo", True), "Miarinarivo": ("Itasy", "Antananarivo", True),
+    "Soavinandriana": ("Itasy", "Antananarivo", False), "Manjakandriana": ("Analamanga", "Antananarivo", True),
+    "Brickaville": ("Atsinanana", "Toamasina", True), "Toamasina I": ("Atsinanana", "Toamasina", True),
+    "Fenoarivo Atsinanana": ("Analanjirofo", "Toamasina", True), "Maroantsetra": ("Analanjirofo", "Toamasina", False),
+    "Ambilobe": ("Diana", "Antsiranana", True), "Antsiranana I": ("Diana", "Antsiranana", True),
+    "Nosy Be": ("Diana", "Antsiranana", True), "Sambava": ("Sava", "Antsiranana", True),
+    "Antalaha": ("Sava", "Antsiranana", True), "Ankazobe": ("Analamanga", "Antananarivo", False),
+    "Ambato-Boeny": ("Boeny", "Mahajanga", False), "Marovoay": ("Boeny", "Mahajanga", True),
+    "Mahajanga I": ("Boeny", "Mahajanga", True), "Maintirano": ("Melaky", "Mahajanga", False),
+    "Port-Bergé": ("Sofia", "Mahajanga", False), "Ihosy": ("Ihorombe", "Fianarantsoa", False),
+    "Toliara I": ("Atsimo-Andrefana", "Toliara", True), "Morondava": ("Menabe", "Toliara", True),
+    "Betioky": ("Atsimo-Andrefana", "Toliara", False), "Farafangana": ("Atsimo-Atsinanana", "Fianarantsoa", False),
+    "Manakara": ("Vatovavy-Fitovinany", "Fianarantsoa", True),
+}
 
-    for resultat, indicateur, cible, realise in [
-        ("Serveurs installés et opérationnels",
-         "Nombre de serveurs configurés / total prévu", "16/16 (100%)", "16/16"),
-        ("SII CSB déployé et fonctionnel",
-         "Nombre de logiciels actifs / total districts", "16/16 (100%)", "15/16"),
-        ("Agents formés et certifiés",
-         "Nombre d'agents formés par district", "≥ 1 SI CSB / district", "≥ 1 dans 14 districts"),
-        ("Rapports d'intervention produits",
-         "Nombre de PV signés / districts visités", "16/16 (100%)", "16/16"),
-        ("Mission réalisée dans les délais",
-         "Date de retour effective vs. planifiée", "≤ J+29", "J+28"),
-    ]:
-        ajouter(db, IndicateurPerformance(
-            mission_id=m1.id, resultat_attendu=resultat,
-            indicateur_mesure=indicateur, cible=cible, valeur_realisee=realise))
+# (titre, type, décalage du début en jours, durée, statut, axes[(itinéraire, [(district, T/E/P)])])
+MISSIONS = [
+    ("Déploiement du réseau sécurisé – Hauts Plateaux", "deploiement", -270, 25, "T", [
+        ("RN7", [("Ambatolampy", "T"), ("Antsirabe I", "T"), ("Ambositra", "T"), ("Fianarantsoa I", "T")]),
+        ("RN1", [("Arivonimamo", "T"), ("Miarinarivo", "T"), ("Soavinandriana", "T")])]),
+    ("Formation des agents – Côte Est", "formation", -210, 20, "T", [
+        ("RN2", [("Manjakandriana", "T"), ("Brickaville", "T"), ("Toamasina I", "T")]),
+        ("RN5", [("Fenoarivo Atsinanana", "T"), ("Maroantsetra", "T")])]),
+    ("Maintenance et audit des installations – Nord", "maintenance", -140, 18, "T", [
+        ("RN6", [("Ambilobe", "T"), ("Antsiranana I", "T"), ("Nosy Be", "T")]),
+        ("RN5A", [("Sambava", "T"), ("Antalaha", "T")])]),
+    ("Déploiement du réseau sécurisé – Ouest", "deploiement", -8, 20, "E", [
+        ("RN4", [("Ankazobe", "T"), ("Ambato-Boeny", "T"), ("Marovoay", "E"), ("Mahajanga I", "P")]),
+        ("Axe Maintirano", [("Maintirano", "T"), ("Port-Bergé", "E")])]),
+    ("Formation des agents – Sud-Ouest", "formation", -2, 14, "E", [
+        ("RN7 Sud", [("Ihosy", "E"), ("Toliara I", "P")]),
+        ("RN9", [("Morondava", "E"), ("Betioky", "P")])]),
+    ("Déploiement du réseau sécurisé – Sud-Est", "deploiement", 30, 25, "P", [
+        ("RN12", [("Manakara", "P"), ("Farafangana", "P")]),
+        ("RN7 Sud-Est", [("Ambositra", "P"), ("Fianarantsoa I", "P")])]),
+]
+# Statut des rapports de mission par (indice mission, indice axe)
+RAPPORTS_PLAN = {(0, 0): "valide", (0, 1): "valide", (1, 0): "valide", (1, 1): "rejete",
+                 (2, 0): "valide", (2, 1): "soumis", (3, 0): "brouillon"}
 
-    # ---------- Mission 2 : formation (en cours) ----------
-    m2 = ajouter(db, Mission(
-        titre="Formation des agents à l'administration des serveurs",
-        type_mission="formation",
-        date_debut=datetime(2026, 10, 1), date_fin_prevue=datetime(2026, 11, 13),
-        statut="en_cours"))
-    axe_m2 = ajouter(db, Axe(
-        mission_id=m2.id, numero_axe=1, itineraire_principal="Tanà → Toliara → Tanà"))
-    md_t1 = ajouter(db, MissionDistrict(
-        axe_id=axe_m2.id, district_id=districts["Toliara I"].id,
-        ordre_visite=1, statut="en_cours"))
-    ajouter(db, MissionDistrict(
-        axe_id=axe_m2.id, district_id=districts["Toliara II"].id,
-        ordre_visite=2, statut="planifie"))
-    equipe_m2 = ajouter(db, Equipe(axe_id=axe_m2.id, type_equipe="DSID"))
-    ajouter(db, Participant(
-        equipe_id=equipe_m2.id, nom="Randria Mamy",
-        fonction="Formateur", id_utilisateur=tech.id_utilisateur))
-    ajouter(db, Participant(
-        equipe_id=equipe_m2.id, nom="Rasoanaivo Lova", fonction="Technicien réseau"))
-    phase_m2 = ajouter(db, Phase(
-        mission_district_id=md_t1.id,
-        type_activite_id=types["Formation à l'administration serveur"].id,
-        numero_ordre=1, duree_prevue="J1-J2",
-        livrable_attendu="PV de formation signé", statut="en_cours"))
-    ajouter(db, Journee(
-        mission_district_id=md_t1.id, numero_jour=1, date=date(2026, 10, 6),
-        lieu="Toliara", statut="realisee"))
-    ajouter(db, Journee(
-        mission_district_id=md_t1.id, numero_jour=2, date=date(2026, 10, 9),
-        lieu="Toliara", statut="prevue"))
-    ajouter(db, Livrable(
-        phase_id=phase_m2.id, type_livrable="PV de formation signé", signe=False))
-    ajouter(db, IndicateurPerformance(
-        mission_id=m2.id, resultat_attendu="Agents formés et certifiés",
-        indicateur_mesure="Nombre d'agents formés par district",
-        cible="≥ 1 par district", valeur_realisee="1/2"))
+PHASES = [
+    ("Installation des équipements", "2 jours", "PV d'installation",
+     "Installation des postes, du câblage et de l'onduleur"),
+    ("Configuration réseau", "1 jour", "Fiche de configuration",
+     "Configuration du réseau local, des VLAN et de l'accès VPN"),
+    ("Tests de sécurité", "1 jour", "Rapport de tests de sécurité",
+     "Tests d'authentification, de segmentation et de sauvegarde"),
+    ("Formation des agents", "2 jours", "Liste de présence et évaluation",
+     "Formation des agents locaux et remise du PV de fin d'intervention"),
+]
+DIFFICULTES = [
+    ("Énergie", "Coupures d'électricité fréquentes pendant l'installation",
+     "Utilisation d'un onduleur et d'un kit solaire d'appoint"),
+    ("Logistique", "Route difficile d'accès en saison des pluies, retard de deux jours",
+     "Replanification des journées et départ anticipé vers le district suivant"),
+    ("Connectivité", "Liaison internet instable dans le district",
+     "Configuration d'un lien de secours et mise en cache locale"),
+    ("Ressources humaines", "Indisponibilité du responsable local le jour de la formation",
+     "Session reprogrammée le lendemain"),
+    ("Sécurité", "Local informatique non sécurisé",
+     "Installation d'une armoire fermée à clé et sensibilisation du chef de district"),
+]
+ECARTS = ["Coupure d'électricité de trois heures", "Arrivée tardive du matériel", "Absence du responsable local",
+          "Pluies abondantes, activité reportée en fin de journée"]
 
-    # ---------- Mission 3 : équipement solaire (planifiée, sans district) ----------
-    m3 = ajouter(db, Mission(
-        titre="Installation de générateurs solaires dans les districts non électrifiés",
-        type_mission="equipement",
-        date_debut=datetime(2026, 11, 16), date_fin_prevue=datetime(2026, 12, 18),
-        statut="planifiee"))
-    axe_m3 = ajouter(db, Axe(
-        mission_id=m3.id, numero_axe=1, itineraire_principal="Tanà → Taolagnaro → Tanà"))
-    equipe_m3 = ajouter(db, Equipe(axe_id=axe_m3.id, type_equipe="DSID"))
-    ajouter(db, Participant(
-        equipe_id=equipe_m3.id, nom="Rakoto Hery",
-        fonction="Chef de mission", id_utilisateur=chef.id_utilisateur))
-    ajouter(db, Participant(
-        equipe_id=equipe_m3.id, nom="Rasolofo Tahiry", fonction="Technicien installation"))
+RESSOURCES = [  # (libellé, niveau, service propriétaire)
+    ("Base de données des agents (RH)", "critique", "DRH"), ("Fichiers de paie", "critique", "DAF"),
+    ("Registre d'état civil", "critique", "DDEC"), ("Dossiers d'audit", "eleve", "IG"),
+    ("Serveur de sauvegarde", "critique", "RS"), ("Cartographie des districts", "moyen", "DDEC"),
+    ("Rapports de mission", "moyen", "SUP"), ("Annuaire des utilisateurs", "faible", "DSI"),
+    ("Données électorales", "critique", "DDEC"), ("Journal des accès", "eleve", "RS"),
+]
 
-    # ---------- Mission 4 : audit pilote (annulée, sans axe) ----------
-    ajouter(db, Mission(
-        titre="Audit de conformité des accès, phase pilote",
-        type_mission="audit_terrain",
-        date_debut=datetime(2026, 9, 14), date_fin_prevue=datetime(2026, 9, 25),
-        statut="annulee"))
 
-    return definitions
+# --------------------------------------------------------------------------------------
+# 4) Construction des données
+# --------------------------------------------------------------------------------------
+def slug(s):
+    return s.lower().replace("é", "e").replace("è", "e").replace(" ", "")
+
+
+def month_label(dt):
+    return dt.strftime("%Y-%m")
+
+
+def build(roles, pw_hash):
+    st = Store()
+    for name, rid in roles.items():
+        st.register_existing("roles_permissions", rid)
+
+    # ---- Services -------------------------------------------------------------------
+    svc = {}
+    T = S["service"]
+    svc["MID"] = st.add("services_communes", nom_service="Ministère de l'Intérieur et de la Décentralisation",
+                        type=T["ministere"], id_service_parent=None)
+    for key, nom in [("SG", "Secrétariat Général"), ("DSI", "Direction des Systèmes d'Information"),
+                     ("DRH", "Direction des Ressources Humaines"), ("DDEC", "Direction de la Décentralisation"),
+                     ("IG", "Inspection Générale"), ("DAF", "Direction des Affaires Financières")]:
+        svc[key] = st.add("services_communes", nom_service=nom, type=T["direction"], id_service_parent=svc["MID"])
+    for key, nom, parent in [("RS", "Service Réseaux et Sécurité", "DSI"), ("DEV", "Service Développement", "DSI"),
+                             ("SUP", "Service Support et Maintenance", "DSI"),
+                             ("SSTAT", "Service Statistique", "DDEC")]:
+        svc[key] = st.add("services_communes", nom_service=nom, type=T["service"], id_service_parent=svc[parent])
+    svc_name = {r["id_service"]: r["nom_service"] for r in st.rows["services_communes"]}
+    svc_key = {v: k for k, v in svc.items()}
+
+    # ---- Utilisateurs ---------------------------------------------------------------
+    spec = [("administrateur", ["DSI", "DSI"]),
+            ("chef_mission", ["RS", "RS", "RS", "SUP", "SUP", "SUP"]),
+            ("technicien", ["SUP"] * 5 + ["RS"] * 5),
+            ("agent", ["DDEC", "DDEC", "DDEC", "DRH", "DRH", "DAF", "DAF", "SG"]),
+            ("auditeur", ["IG", "IG", "IG"]),
+            ("responsable_hierarchique", ["SG", "DAF", "DRH"])]
+    used_names = {(p, n) for p, n, _ in DEMO_LOGINS.values()}
+    mat = 0
+    U = defaultdict(list)
+    rng = random.Random(7)
+    for role, services in spec:
+        for i, skey in enumerate(services):
+            if i == 0:
+                prenom, nom, local = DEMO_LOGINS[role]
+                email = f"{local}@mid.gov.mg"
+            else:
+                while True:
+                    prenom, nom = rng.choice(PRENOMS), rng.choice(NOMS)
+                    if (prenom, nom) not in used_names:
+                        used_names.add((prenom, nom))
+                        break
+                email = f"{slug(prenom)}.{slug(nom)}@mid.gov.mg"
+            mat += 1
+            uid = st.add("utilisateurs", nom=nom, prenom=prenom, email=email, matricule=f"MID-{mat:04d}",
+                         mot_de_passe_hash=pw_hash, id_service=svc[skey], id_role=roles[role], statut=S["user"],
+                         date_creation=at(TODAY - timedelta(days=rng.randint(320, 420)), 9))
+            U[role].append({"id": uid, "nom": f"{prenom} {nom}", "service": skey, "role": role, "email": email,
+                            "ip": f"10.20.{len(U['_all']) % 40 + 1}.{10 + len(U['_all'])}"})
+            U["_all"].append(U[role][-1])
+    users_by_id = {u["id"]: u for u in U["_all"]}
+    admin_id = U["administrateur"][0]["id"]
+
+    # ---- Districts, types d'activité ------------------------------------------------
+    dist_id = {}
+    for nom, (region, province, elec) in DISTRICTS.items():
+        dist_id[nom] = st.add("districts", nom=nom, region=region, province=province, electrifie=elec)
+    type_id = [st.add("types_activite", libelle=p[0]) for p in PHASES]
+
+    # ---- Missions -------------------------------------------------------------------
+    axe_global = 0
+    report_info = []  # (rapport_id, chef_id, statut, date_soumission)
+    mission_stats = []
+    for mi, (titre, mtype, off, duree, mstat, axes) in enumerate(MISSIONS):
+        start = TODAY + timedelta(days=off)
+        mid = st.add("missions", titre=titre, type_mission=mtype, date_debut=naive(start),
+                     date_fin_prevue=naive(start + timedelta(days=duree)), statut=S["mission"][mstat])
+        nb_dist = done = 0
+        for ai, (itin, districts) in enumerate(axes):
+            axe_id = st.add("axes", mission_id=mid, numero_axe=ai + 1, itineraire_principal=itin)
+            # équipe : 1 chef, 2 techniciens, 1 agent (formateur)
+            chef = U["chef_mission"][axe_global % 6]
+            techs = [U["technicien"][(2 * axe_global) % 10], U["technicien"][(2 * axe_global + 1) % 10]]
+            agent = U["agent"][axe_global % 8]
+            etype = {"deploiement": "Équipe de déploiement", "formation": "Équipe de formation",
+                     "maintenance": "Équipe de maintenance"}[mtype]
+            eq = st.add("equipes", axe_id=axe_id, type_equipe=etype)
+            for u, fonction in [(chef, "Chef d'équipe"), (techs[0], "Technicien réseau"),
+                                (techs[1], "Technicien sécurité"), (agent, "Formateur")]:
+                st.add("participants", equipe_id=eq, nom=u["nom"], fonction=fonction, id_utilisateur=u["id"])
+            axe_global += 1
+
+            codes = [c for _, c in districts]
+            idx_e = codes.index("E") if "E" in codes else None
+            last_date = start
+            for order, (dname, code) in enumerate(districts, start=1):
+                if idx_e is not None:
+                    dstart = TODAY - timedelta(days=1) + timedelta(days=(order - 1 - idx_e) * 4)
+                else:
+                    dstart = start + timedelta(days=(order - 1) * 4)
+                last_date = max(last_date, dstart + timedelta(days=2))
+                md = st.add("missions_districts", axe_id=axe_id, district_id=dist_id[dname], ordre_visite=order,
+                            statut=S["district"][code])
+                nb_dist += 1
+                done += code == "T"
+                phase_codes = {"T": "TTTT", "E": "TTEP", "P": "PPPP"}[code]
+                for pi, (plabel, pdur, plivr, _) in enumerate(PHASES):
+                    pid = st.add("phases", mission_district_id=md, type_activite_id=type_id[pi],
+                                 numero_ordre=pi + 1, duree_prevue=pdur, livrable_attendu=plivr,
+                                 statut=S["phase"][phase_codes[pi]])
+                    if phase_codes[pi] == "T":
+                        st.add("livrables", phase_id=pid, type_livrable=plivr,
+                               date_production=naive(dstart + timedelta(days=min(pi, 2)), 16), signe=True,
+                               fichier=None)
+                jcodes = {"T": "TTT", "E": "TEP", "P": "PPP"}[code]
+                offsets = [-1, 0, 1] if code == "E" else [0, 1, 2]
+                prevues = [PHASES[0][3], PHASES[1][3] + " et " + PHASES[2][3].lower(), PHASES[3][3]]
+                for n in range(3):
+                    realise = prevues[n] if jcodes[n] == "T" else None
+                    ecart = None
+                    if jcodes[n] == "T" and rng.random() < 0.25:
+                        ecart = rng.choice(ECARTS)
+                        realise = prevues[n] + " (partiellement, voir écart)"
+                    st.add("journees", mission_district_id=md, numero_jour=n + 1,
+                           date=dstart + timedelta(days=offsets[n]),
+                           lieu=f"{rng.choice(['Préfecture', 'Mairie', 'Bureau du district', 'Centre de formation'])} de {dname}",
+                           statut=S["journee"][jcodes[n]], activites_prevues=prevues[n],
+                           activites_realisees=realise, ecart=ecart)
+
+            # rapport de mission
+            plan = RAPPORTS_PLAN.get((mi, ai))
+            if plan:
+                dnames = [d for d, _ in districts]
+                rid = make_rapport(st, plan, titre, ai + 1, itin, dnames, axe_id, chef["id"], admin_id, last_date)
+                report_info.append((rid, chef["id"], plan))
+
+        # indicateurs de performance
+        dev = mstat != "P"
+        st.add("indicateurs_performance", mission_id=mid, resultat_attendu="Districts équipés d'un accès sécurisé",
+               indicateur_mesure="Nombre de districts équipés", cible=str(nb_dist),
+               valeur_realisee=str(done) if dev else None)
+        st.add("indicateurs_performance", mission_id=mid, resultat_attendu="Agents locaux formés",
+               indicateur_mesure="Nombre d'agents formés", cible=str(nb_dist * 12),
+               valeur_realisee=str(done * rng.randint(10, 12)) if dev else None)
+        st.add("indicateurs_performance", mission_id=mid, resultat_attendu="Réseau disponible",
+               indicateur_mesure="Taux de disponibilité", cible="95 %",
+               valeur_realisee=f"{rng.randint(92, 98)} %" if dev and done else None)
+
+    # ---- Demandes de mot de passe, échecs de connexion, notifications ----------------
+    tech_ids = [u["id"] for u in U["technicien"]]
+    st.add("demandes_mot_de_passe", id_utilisateur=tech_ids[4], motif="Mot de passe oublié après le retour de mission",
+           statut=S["demande"]["attente"], date_demande=NOW - timedelta(hours=5), id_traitant=None,
+           date_traitement=None)
+    for k, uid in enumerate([U["agent"][2]["id"], U["chef_mission"][5]["id"]]):
+        d0 = NOW - timedelta(days=9 + 6 * k)
+        st.add("demandes_mot_de_passe", id_utilisateur=uid, motif="Compte verrouillé après plusieurs tentatives",
+               statut=S["demande"]["traitee"], date_demande=d0, id_traitant=admin_id,
+               date_traitement=d0 + timedelta(hours=3))
+    emails = [u["email"] for u in U["_all"]]
+    for _ in range(14):
+        st.add("echecs_connexion", email=rng.choice(emails), adresse_ip=f"10.20.{rng.randint(1, 40)}.{rng.randint(10, 60)}",
+               date_echec=NOW - timedelta(days=rng.randint(0, 10), minutes=rng.randint(0, 1400)))
+    burst = NOW - timedelta(days=2, hours=1)  # tentative de force brute sur le compte administrateur
+    for k in range(9):
+        st.add("echecs_connexion", email="admin@mid.gov.mg", adresse_ip="197.149.42.18",
+               date_echec=burst + timedelta(seconds=25 * k))
+
+    for rid, chef_id, plan in report_info:
+        if plan == "soumis":
+            st.add("notifications", id_utilisateur=admin_id, type_notification="rapport_soumis",
+                   message="Un rapport de mission est en attente de validation.", lien=None, lue=False,
+                   date_creation=NOW - timedelta(days=3))
+        elif plan == "valide":
+            st.add("notifications", id_utilisateur=chef_id, type_notification="rapport_valide",
+                   message="Votre rapport de mission a été validé.", lien=None, lue=True,
+                   date_creation=NOW - timedelta(days=rng.randint(30, 200)))
+        elif plan == "rejete":
+            st.add("notifications", id_utilisateur=chef_id, type_notification="rapport_rejete",
+                   message="Votre rapport de mission a été rejeté : des corrections sont demandées.", lien=None,
+                   lue=False, date_creation=NOW - timedelta(days=rng.randint(30, 60)))
+    st.add("notifications", id_utilisateur=admin_id, type_notification="demande_mot_de_passe",
+           message="Nouvelle demande de réinitialisation de mot de passe.", lien=None, lue=False,
+           date_creation=NOW - timedelta(hours=5))
+
+    # ---- Audit comportemental ---------------------------------------------------------
+    pol = {}
+    for key, nom, desc, seuil in [
+        ("horaires", "Accès hors horaires", "Accès à une ressource sensible en dehors des horaires habituels",
+         "z_score >= 3.0"),
+        ("volume", "Volume de téléchargement anormal", "Volume d'exports très supérieur à la moyenne du profil",
+         "z_score >= 3.0"),
+        ("perimetre", "Accès hors périmètre", "Accès à une ressource hors du périmètre habituel de l'utilisateur",
+         "z_score >= 3.0")]:
+        pol[key] = st.add("politiques_conformite", nom_politique=nom, description=desc, seuils_configures=seuil,
+                          date_effective=at(TODAY - timedelta(days=300), 9))
+
+    res = {}
+    for label, niveau, skey in RESSOURCES:
+        res[label] = st.add("ressources_sensibles", type_ressource=label, niveau_sensibilite=S["niveau"][niveau],
+                            id_service_proprietaire=svc[skey])
+    R = lambda label: res[label]  # noqa: E731
+
+    own_res = {"DRH": "Base de données des agents (RH)", "DAF": "Fichiers de paie", "DDEC": "Registre d'état civil",
+               "IG": "Dossiers d'audit"}
+    base_res = {
+        "administrateur": ["Rapports de mission", "Annuaire des utilisateurs", "Journal des accès", "Serveur de sauvegarde"],
+        "chef_mission": ["Rapports de mission", "Cartographie des districts", "Annuaire des utilisateurs"],
+        "technicien": ["Rapports de mission", "Cartographie des districts", "Annuaire des utilisateurs"],
+        "agent": ["Cartographie des districts", "Annuaire des utilisateurs", "Rapports de mission"],
+        "auditeur": ["Dossiers d'audit", "Journal des accès", "Rapports de mission", "Annuaire des utilisateurs"],
+        "responsable_hierarchique": ["Rapports de mission", "Annuaire des utilisateurs"],
+    }
+    normal_res = {}
+    for u in U["_all"]:
+        labels = list(base_res[u["role"]])
+        if u["service"] in own_res:
+            labels.append(own_res[u["service"]])
+        normal_res[u["id"]] = [R(x) for x in labels]
+
+    prev_month = month_label(TODAY.replace(day=1) - timedelta(days=1))
+    profil = {}
+    for u in U["_all"]:
+        hrs = "07:30-18:00" if u["role"] == "administrateur" else "08:00-17:00"
+        perim = ", ".join(r for r in [x for x in base_res[u["role"]]] + ([own_res[u["service"]]] if u["service"] in own_res else []))
+        profil[u["id"]] = st.add("profils_comportementaux", id_utilisateur=u["id"], periode_reference=prev_month,
+                                 volume_moyen=round(rng.uniform(6, 30), 1), horaires_habituels=hrs,
+                                 perimetre_habituel=perim[:255], date_calcul=NOW - timedelta(days=3))
+
+    # Journal : accès normaux sur 90 jours
+    raw = []  # (ts, uid, rid, action, z, tag)
+    for k in range(90, -1, -1):
+        d = TODAY - timedelta(days=k)
+        if d.weekday() >= 5:
+            continue
+        for _ in range(rng.randint(10, 17)):
+            u = rng.choice(U["_all"])
+            ts = at(d, rng.randint(8, 16), rng.randint(0, 59)) + timedelta(seconds=rng.randint(0, 59))
+            if ts > NOW:
+                continue
+            act = rng.choices(["consultation", "modification", "export", "creation"], [70, 18, 6, 6])[0]
+            z = max(-2.4, min(2.4, round(rng.gauss(0, 0.9), 2)))
+            raw.append((ts, u["id"], rng.choice(normal_res[u["id"]]), act, z, None))
+
+    # Scénarios d'anomalies pour la démonstration
+    tech_a, agent_b, resp_c = U["technicien"][2], U["agent"][3], U["responsable_hierarchique"][1]
+    for k, dd in enumerate([12, 10, 9, 6, 4, 2]):  # A : exports de nuit sur les fichiers de paie
+        ts = at(TODAY - timedelta(days=dd), 2, rng.randint(0, 50))
+        raw.append((ts, tech_a["id"], R("Fichiers de paie"), "export", round(rng.uniform(4.1, 5.8), 2), "A"))
+    for dd in [21, 20, 20, 19]:  # B : agent RH qui consulte des données électorales
+        ts = at(TODAY - timedelta(days=dd), rng.randint(10, 15), rng.randint(0, 59))
+        raw.append((ts, agent_b["id"], R("Données électorales"), "consultation", round(rng.uniform(3.1, 3.7), 2), "B"))
+    for k in range(25):  # C : rafale d'exports de la base RH
+        ts = at(TODAY - timedelta(days=3), 13, 0) + timedelta(seconds=50 * k)
+        raw.append((ts, resp_c["id"], R("Base de données des agents (RH)"), "export",
+                    round(rng.uniform(3.4, 4.6), 2) if k >= 22 else round(rng.uniform(1.2, 2.3), 2), "C"))
+    raw.sort(key=lambda r: r[0])
+
+    prev_hash = "0" * 64
+    scen = defaultdict(list)
+    scored = []  # (ts, uid, z)
+    for ts, uid, rid, act, z, tag in raw:
+        ip = "41.204.17.9" if tag == "A" else users_by_id[uid]["ip"]
+        h = hashlib.sha256(f"{prev_hash}|{uid}|{rid}|{act}|{ts.isoformat()}|{ip}".encode()).hexdigest()
+        eid = st.add("journal_acces", id_utilisateur=uid, id_ressource=rid, type_action=act, horodatage=ts,
+                     adresse_ip=ip, hash_entree=h, hash_precedent=prev_hash)
+        prev_hash = h
+        sid = st.add("scores_anomalie", id_entree_journal=eid, id_profil_reference=profil[uid], z_score=z,
+                     methode_utilisee="z-score", date_calcul=ts + timedelta(minutes=5))
+        scored.append((ts, uid, z))
+        if tag:
+            scen[tag].append((z, sid, ts))
+
+    def gravite(z):
+        return S["gravite"]["critique" if z >= 5 else "haute" if z >= 4 else "moyenne"]
+
+    for tag, polkey, count in [("A", "horaires", 3), ("B", "perimetre", 1), ("C", "volume", 2)]:
+        top = sorted(scen[tag], reverse=True)[:count]
+        for rank, (z, sid, ts) in enumerate(top):
+            created = ts + timedelta(minutes=10)
+            if tag == "B":
+                statut = S["alerte"]["cloturee"]
+            elif tag == "A" and rank == 0:
+                statut = S["alerte"]["en_cours"]
+            else:
+                statut = S["alerte"]["ouverte"]
+            aid = st.add("alertes_securite", id_score=sid, id_politique=pol[polkey], niveau_gravite=gravite(z),
+                         statut=statut, date_creation=created)
+            auditeurs = U["auditeur"]
+            if tag == "A" and rank == 0:
+                st.add("investigations", id_alerte=aid, id_enqueteur=auditeurs[0]["id"],
+                       statut=S["investigation"]["en_cours"], conclusion=None,
+                       date_ouverture=min(NOW, created + timedelta(days=1)), date_cloture=None)
+            if tag == "B":
+                st.add("investigations", id_alerte=aid, id_enqueteur=auditeurs[1]["id"],
+                       statut=S["investigation"]["cloturee"],
+                       conclusion="Faux positif : agent détaché temporairement auprès de la Direction de la "
+                                  "Décentralisation pour l'inventaire des données.",
+                       date_ouverture=created + timedelta(days=1), date_cloture=created + timedelta(days=4))
+    for a in U["auditeur"][:2]:
+        st.add("notifications", id_utilisateur=a["id"], type_notification="alerte_securite",
+               message="Nouvelles alertes de sécurité à examiner.", lien=None, lue=False,
+               date_creation=NOW - timedelta(days=2))
+
+    # Benchmarking par service et rapports d'audit (calculés à partir du journal)
+    agg = defaultdict(list)  # (période, service) -> [|z|]
+    cnt_users = defaultdict(set)
+    for ts, uid, z in scored:
+        key = (month_label(ts), users_by_id[uid]["service"])
+        agg[key].append(abs(z))
+        cnt_users[key].add(uid)
+    periods = sorted({p for p, _ in agg})[-3:]
+    for p in periods:
+        items = sorted(((sum(v) / len(v), s) for (pp, s), v in agg.items() if pp == p), reverse=True)
+        for rank, (score, s) in enumerate(items, start=1):
+            st.add("benchmarking_services", id_service=svc[s], periode=p, score_risque_moyen=round(score, 3),
+                   rang=rank, date_calcul=NOW - timedelta(days=1))
+    alert_count = len(st.rows["alertes_securite"])
+    for (p, s), vals in sorted(agg.items()):
+        if p != prev_month:
+            continue
+        contenu = (f"Rapport d'audit comportemental – {svc_name[svc[s]]} – période {p}.\n"
+                   f"{len(vals)} accès journalisés pour {len(cnt_users[(p, s)])} utilisateur(s). "
+                   f"Score de risque moyen : {sum(vals) / len(vals):.2f}. "
+                   f"Aucun écart majeur de conformité n'a été relevé sur la période, hormis les alertes "
+                   f"traitées par l'Inspection Générale ({alert_count} alerte(s) au total sur la base).")
+        st.add("rapports_audit", id_service=svc[s], periode_couverte=p, contenu=contenu,
+               date_generation=at(TODAY.replace(day=1), 8))
+    return st, U
+
+
+def make_rapport(st, plan, titre, axe_no, itin, dnames, axe_id, chef_id, admin_id, last_date):
+    r = random.Random(axe_id)
+    full = plan != "brouillon"
+    if plan == "soumis":
+        created, modif, soum = NOW - timedelta(days=5), NOW - timedelta(days=3), NOW - timedelta(days=3)
+    elif plan == "brouillon":
+        created, modif, soum = NOW - timedelta(days=1, hours=2), NOW - timedelta(hours=8), None
+    else:
+        created = at(last_date + timedelta(days=1), 9)
+        modif = created + timedelta(days=1)
+        soum = created + timedelta(days=2, hours=1)
+    valid = plan in ("valide", "rejete")
+    val_date = soum + timedelta(days=3, hours=2) if valid else None
+    comment = {"valide": "Rapport conforme, validé.",
+               "rejete": "La section « tests de sécurité » est trop succincte : merci de détailler les résultats "
+                         "par district avant de soumettre à nouveau."}.get(plan)
+    n_ok = r.randint(85, 100)
+    rid = st.add(
+        "rapports_mission", axe_id=axe_id, id_auteur=chef_id, statut=S["rapport"][plan],
+        contexte=f"Dans le cadre de la mission « {titre} », l'équipe de l'axe {axe_no} ({itin}) est intervenue dans "
+                 f"{len(dnames)} districts : {', '.join(dnames)}.",
+        justification="Les districts concernés ne disposaient pas d'un accès sécurisé aux applications du "
+                      "ministère ; la mission vise à installer, configurer et sécuriser les postes de travail et "
+                      "à former les agents locaux.",
+        itineraire_reel=" → ".join(["Antananarivo"] + dnames) + ". Le parcours prévu a été respecté"
+                        + (", avec un détour de 40 km dû à l'état de la route." if r.random() < 0.4 else "."),
+        inventaire_materiel="5 ordinateurs, 2 routeurs, 1 onduleur par district, 1 kit solaire d'appoint, "
+                            "200 m de câblage réseau." if full else None,
+        configuration_technique="Réseau local segmenté (VLAN administration / agents), accès VPN vers le serveur "
+                                "central, comptes nominatifs créés pour chaque agent." if full else None,
+        tests_securite="Tests d'authentification, de segmentation réseau et de restauration de sauvegarde "
+                       "réalisés ; aucune vulnérabilité critique relevée, deux correctifs mineurs appliqués."
+        if full else None,
+        nb_participants_formes=r.randint(7, 10) * len(dnames) if full else None,
+        profil_participants="Agents administratifs et secrétaires de district" if full else None,
+        themes_formation="Bonnes pratiques de sécurité, gestion des mots de passe, utilisation de la plateforme"
+        if full else None,
+        evaluation_formation="Satisfaction moyenne de 4,2/5 ; les participants demandent une session de rappel."
+        if full else None,
+        points_forts="Bonne mobilisation des autorités locales ; équipe complète et matériel disponible dès le "
+                     "départ." if full else None,
+        lecons_apprises="Anticiper les coupures d'électricité et prévoir une marge de deux jours en saison des "
+                        "pluies." if full else None,
+        bonnes_pratiques="Pré-configuration des postes à Antananarivo avant le départ ; fiche de procédures remise "
+                         "à chaque district." if full else None,
+        conclusion=f"Les objectifs de l'axe ont été atteints à {n_ok} %." if full else None,
+        recommandations="Prévoir une visite de suivi à trois mois et former un référent informatique par "
+                        "district." if full else None,
+        date_creation=created, date_modification=modif, date_soumission=soum,
+        id_validateur=admin_id if valid else None, date_validation=val_date, commentaire_validation=comment)
+    for cat, desc, sol in r.sample(DIFFICULTES, 1 if plan == "brouillon" else r.randint(1, 3)):
+        st.add("rapport_difficultes", id_rapport=rid, categorie=cat, description=desc, solution=sol)
+    return rid
+
+
+# --------------------------------------------------------------------------------------
+# 5) Vérifications, base de données
+# --------------------------------------------------------------------------------------
+def check(st):
+    errs = []
+    for (t, col), ref in FK.items():
+        for r in st.rows[t]:
+            v = r[col]
+            if v is not None and v not in st.ids[ref]:
+                errs.append(f"clé étrangère invalide : {t}.{col}={v} -> {ref}")
+    for t, col in [("utilisateurs", "email"), ("utilisateurs", "matricule"), ("journal_acces", "hash_entree"),
+                   ("rapports_mission", "axe_id")]:
+        vals = [r[col] for r in st.rows[t]]
+        if len(vals) != len(set(vals)):
+            errs.append(f"doublon dans {t}.{col}")
+    pairs = [(r["equipe_id"], r["id_utilisateur"]) for r in st.rows["participants"]]
+    if len(pairs) != len(set(pairs)):
+        errs.append("doublon dans participants (equipe_id, id_utilisateur)")
+    return errs
+
+
+def connect(a):
+    try:
+        import psycopg2 as pg
+    except ImportError:
+        try:
+            import psycopg as pg
+        except ImportError:
+            sys.exit("Installe un pilote PostgreSQL :  pip install psycopg2-binary")
+    pw = os.environ.get("PGPASSWORD") or getpass.getpass(f"Mot de passe de l'utilisateur {a.user} : ")
+    return pg.connect(host=a.host, port=a.port, dbname=a.db, user=a.user, password=pw)
+
+
+def inspect(conn):
+    cur = conn.cursor()
+    checks = [("utilisateurs", "statut"), ("roles_permissions", "nom_role"), ("roles_permissions", "niveau_acces"),
+              ("services_communes", "type"), ("missions", "type_mission"), ("missions", "statut"),
+              ("missions_districts", "statut"), ("phases", "statut"), ("journees", "statut"),
+              ("equipes", "type_equipe"), ("participants", "fonction"), ("rapports_mission", "statut"),
+              ("notifications", "type_notification"), ("demandes_mot_de_passe", "statut"),
+              ("ressources_sensibles", "niveau_sensibilite"), ("journal_acces", "type_action"),
+              ("scores_anomalie", "methode_utilisee"), ("alertes_securite", "niveau_gravite"),
+              ("alertes_securite", "statut"), ("investigations", "statut")]
+    for t, c in checks:
+        cur.execute(f"SELECT DISTINCT {c} FROM public.{t} WHERE {c} IS NOT NULL ORDER BY 1")
+        print(f"{t}.{c:<20} {[r[0] for r in cur.fetchall()]}")
+    cur.execute("SELECT DISTINCT left(mot_de_passe_hash, 7) FROM public.utilisateurs")
+    print("préfixe des hash de mot de passe :", [r[0] for r in cur.fetchall()])
+
+
+def hash_password(pw):
+    try:
+        import bcrypt
+        return bcrypt.hashpw(pw.encode(), bcrypt.gensalt(rounds=12)).decode()
+    except ImportError:
+        try:
+            from passlib.hash import bcrypt as pb
+            return pb.hash(pw)
+        except ImportError:
+            sys.exit("Installe bcrypt :  pip install bcrypt")
+
+
+def summary(st):
+    print("\nLignes générées :")
+    for t in PK:
+        if st.rows[t]:
+            print(f"  {t:<26}{len(st.rows[t]):>6}")
 
 
 def main():
-    base = engine.url.database
-    if base != BASE_ATTENDUE:
-        raise SystemExit(
-            f'Arrêt : la base ciblée est "{base}", pas "{BASE_ATTENDUE}". '
-            "Rien n'a été modifié."
-        )
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--apply", action="store_true", help="vide les tables puis insère la démo")
+    ap.add_argument("--inspect", action="store_true", help="affiche les valeurs présentes dans la base")
+    ap.add_argument("--host", default="localhost")
+    ap.add_argument("--port", type=int, default=5433)
+    ap.add_argument("--db", default="audit_comportemental")
+    ap.add_argument("--user", default="postgres")
+    a = ap.parse_args()
 
-    reponse = input(
-        f'Cette opération efface TOUTES les données de "{base}". '
-        "Tape OUI pour continuer : "
-    )
-    if reponse.strip() != "OUI":
-        raise SystemExit("Annulé. Rien n'a été modifié.")
+    if a.inspect:
+        conn = connect(a)
+        inspect(conn)
+        conn.close()
+        return
 
-    db = SessionLocal()
+    if not a.apply:  # simulation
+        roles = {r: i + 1 for i, r in enumerate(ROLES_NIVEAU)}
+        st, U = build(roles, "$2b$12$" + "x" * 53)
+        errs = check(st)
+        summary(st)
+        print("\nCohérence :", "OK" if not errs else "\n  " + "\n  ".join(errs[:20]))
+        print("\nSimulation terminée, rien n'a été écrit. Relance avec --apply pour alimenter la base.")
+        return
+
+    print(f"ATTENTION : toutes les données de {a.db} (port {a.port}) vont être SUPPRIMÉES puis remplacées.")
+    print("Les tables alembic_version et roles_permissions sont conservées.")
+    if input("Tape OUI pour continuer : ").strip() != "OUI":
+        sys.exit("Annulé.")
+    conn = connect(a)
     try:
-        effacer(db)
-        comptes = semer(db)
-        db.commit()  # tout ou rien : en cas d'erreur, l'ancien contenu est conservé
+        cur = conn.cursor()
+        cur.execute("SELECT nom_role, id_role FROM public.roles_permissions")
+        roles = dict(cur.fetchall())
+        for name, niveau in ROLES_NIVEAU.items():
+            if name not in roles:
+                print(f"  rôle manquant ajouté : {name}")
+                cur.execute("INSERT INTO public.roles_permissions (nom_role, niveau_acces) VALUES (%s, %s) "
+                            "RETURNING id_role", (name, niveau))
+                roles[name] = cur.fetchone()[0]
+        st, U = build(roles, hash_password(DEMO_PASSWORD))
+        errs = check(st)
+        if errs:
+            sys.exit("Incohérences détectées, rien n'est écrit :\n  " + "\n  ".join(errs[:20]))
+        cur.execute("TRUNCATE TABLE " + ", ".join(f"public.{t}" for t in TO_TRUNCATE) + " RESTART IDENTITY CASCADE")
+        for t in PK:
+            rows = st.rows[t]
+            if not rows:
+                continue
+            cols = list(rows[0])
+            sql = (f"INSERT INTO public.{t} ({', '.join(cols)}) VALUES ({', '.join(['%s'] * len(cols))})")
+            cur.executemany(sql, [[r[c] for c in cols] for r in rows])
+            pk = PK[t]
+            cur.execute(f"SELECT setval(pg_get_serial_sequence('public.{t}', '{pk}'), "
+                        f"(SELECT COALESCE(MAX({pk}), 1) FROM public.{t}))")
+        conn.commit()
     except Exception:
-        db.rollback()
+        conn.rollback()
         raise
     finally:
-        db.close()
-
-    print("\nBase réinitialisée. Comptes de démonstration "
-          f"(mot de passe : {MOT_DE_PASSE_DEMO}) :")
-    for nom, prenom, email, _matricule, role, _service in comptes:
-        print(f"  {email:<24} {role}")
+        conn.close()
+    summary(st)
+    print(f"\nTerminé. Mot de passe de tous les comptes : {DEMO_PASSWORD}")
+    print("Comptes faciles à retenir :")
+    for role, (_, _, local) in DEMO_LOGINS.items():
+        print(f"  {role:<26}{local}@mid.gov.mg")
 
 
 if __name__ == "__main__":

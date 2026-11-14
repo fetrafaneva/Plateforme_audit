@@ -10,6 +10,7 @@ from app.core.connexion import (
     normaliser_email,
     secondes_avant_deblocage,
 )
+from app.core.reseau import ip_du_client
 from app.core.security import create_access_token, hash_password, verify_password
 from app.db.base import get_db
 from app.models.identity import Role, ServiceCommune, Utilisateur
@@ -54,7 +55,7 @@ def register(payload: UserCreate, db: Session = Depends(get_db)):
 @router.post("/login", response_model=Token)
 def login(payload: UserLogin, request: Request, db: Session = Depends(get_db)):
     email = normaliser_email(payload.email)
-    adresse_ip = request.client.host if request.client else "inconnue"
+    adresse_ip = ip_du_client(request)
 
     # Trop d'échecs récents : on refuse avant même de regarder le mot de passe.
     attente = secondes_avant_deblocage(db, email, adresse_ip)

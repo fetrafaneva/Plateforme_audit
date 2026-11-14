@@ -15,7 +15,6 @@ export const remplacerDifficultes = (id, liste) =>
   api.put(`/rapports/${id}/difficultes`, liste).then(data);
 export const remplacerChronogramme = (id, lignes) =>
   api.put(`/rapports/${id}/chronogramme`, lignes).then(data);
-export const obtenirCompteurs = () => api.get("/rapports/compteurs").then(data);
 
 // Pièces jointes. api.js impose « application/json » par défaut : pour un
 // fichier il faut le remplacer, sinon axios convertirait le FormData en JSON.

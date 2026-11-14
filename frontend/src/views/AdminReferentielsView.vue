@@ -246,22 +246,28 @@ onMounted(charger);
       <p v-if="erreur" class="alert-error">{{ erreur }}</p>
       <p v-if="message" class="message-ok">{{ message }}</p>
 
-      <div class="onglets">
+      <div class="onglets" role="tablist">
         <button
           type="button"
           class="onglet"
+          role="tab"
+          :aria-selected="onglet === 'districts'"
           :class="{ actif: onglet === 'districts' }"
           @click="onglet = 'districts'"
         >
-          Districts ({{ districts.length }})
+          Districts
+          <span class="compteur">{{ districts.length }}</span>
         </button>
         <button
           type="button"
           class="onglet"
+          role="tab"
+          :aria-selected="onglet === 'types'"
           :class="{ actif: onglet === 'types' }"
           @click="onglet = 'types'"
         >
-          Types d'activité ({{ types.length }})
+          Types d'activité
+          <span class="compteur">{{ types.length }}</span>
         </button>
       </div>
 
@@ -299,7 +305,9 @@ onMounted(charger);
                 <th>Région</th>
                 <th>Province</th>
                 <th>Électrifié</th>
-                <th></th>
+                <th class="col-actions">
+                  <span class="sr-only">Actions</span>
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -317,16 +325,21 @@ onMounted(charger);
                     {{ d.electrifie ? "Oui" : "Non / inconnu" }}
                   </span>
                 </td>
-                <td class="cellule-actions">
-                  <button
-                    class="btn btn-outline btn-sm"
-                    @click="ouvrir('district', d)"
-                  >
-                    Modifier
-                  </button>
-                  <button class="btn-suppr" @click="retirerDistrict(d)">
-                    Supprimer
-                  </button>
+                <td class="col-actions">
+                  <div class="groupe-actions">
+                    <button
+                      class="btn btn-outline btn-sm"
+                      @click="ouvrir('district', d)"
+                    >
+                      Modifier
+                    </button>
+                    <button
+                      class="btn btn-outline btn-sm btn-suppr"
+                      @click="retirerDistrict(d)"
+                    >
+                      Supprimer
+                    </button>
+                  </div>
                 </td>
               </tr>
             </tbody>
@@ -349,17 +362,20 @@ onMounted(charger);
         <p v-else-if="types.length === 0" class="muted">
           Aucun type d'activité.
         </p>
-        <ul v-else class="list-clean">
+        <ul v-else class="list-clean liste-types">
           <li v-for="t in types" :key="t.id" class="ligne-type">
-            <strong>{{ t.libelle }}</strong>
-            <span class="cellule-actions">
+            <strong class="libelle-type">{{ t.libelle }}</strong>
+            <div class="groupe-actions">
               <button class="btn btn-outline btn-sm" @click="ouvrir('type', t)">
                 Modifier
               </button>
-              <button class="btn-suppr" @click="retirerType(t)">
+              <button
+                class="btn btn-outline btn-sm btn-suppr"
+                @click="retirerType(t)"
+              >
                 Supprimer
               </button>
-            </span>
+            </div>
           </li>
         </ul>
       </section>
@@ -523,29 +539,83 @@ onMounted(charger);
   border-radius: 14px;
 }
 
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* Onglets : sélecteur en pastille, l'onglet actif ressort sur un fond clair */
 .onglets {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
+  display: inline-flex;
+  gap: 0.25rem;
   margin: 0 0 1.2rem;
-  border-bottom: 1px solid var(--border);
+  padding: 0.3rem;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: 999px;
 }
 
 .onglet {
-  margin-bottom: -1px;
-  padding: 0.6rem 1rem;
-  background: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.5rem 1.1rem;
+  background: transparent;
   border: none;
-  border-bottom: 3px solid transparent;
+  border-radius: 999px;
   font: inherit;
   font-weight: 600;
   color: var(--muted);
   cursor: pointer;
+  transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+}
+
+.onglet:hover:not(.actif) {
+  color: var(--violet);
+}
+
+.onglet:focus-visible {
+  outline: 2px solid var(--violet);
+  outline-offset: 2px;
 }
 
 .onglet.actif {
+  background: #fff;
   color: var(--violet);
-  border-bottom-color: var(--violet);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+}
+
+.compteur {
+  min-width: 1.7rem;
+  padding: 0.05rem 0.5rem;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.07);
+  font-size: 0.78rem;
+  font-weight: 600;
+  line-height: 1.4;
+  text-align: center;
+}
+
+.onglet.actif .compteur {
+  background: color-mix(in srgb, var(--violet) 14%, transparent);
+}
+
+@media (max-width: 520px) {
+  .onglets {
+    display: flex;
+    width: 100%;
+  }
+
+  .onglet {
+    flex: 1;
+    justify-content: center;
+    padding: 0.5rem 0.6rem;
+    font-size: 0.85rem;
+  }
 }
 
 .barre {
@@ -564,6 +634,7 @@ onMounted(charger);
 
 .actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.6rem;
 }
 
@@ -592,30 +663,47 @@ onMounted(charger);
   color: var(--muted);
 }
 
-.cellule-actions {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.8rem;
-  white-space: nowrap;
+.tableau tbody tr:hover td {
+  background: var(--bg-soft);
 }
 
-td.cellule-actions {
-  display: table-cell;
+/* Colonne des actions : étroite, alignée à droite, jamais coupée */
+.tableau th.col-actions,
+.tableau td.col-actions {
+  width: 1%;
+  white-space: nowrap;
   text-align: right;
 }
 
-.btn-suppr {
-  padding: 0;
-  background: none;
-  border: none;
-  font: inherit;
-  font-size: 0.85rem;
-  color: #b0173f;
-  cursor: pointer;
+/* Boutons Modifier / Supprimer : même taille, côte à côte, alignés à droite */
+.groupe-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
 }
 
-.btn-suppr:hover {
-  text-decoration: underline;
+.groupe-actions .btn {
+  min-width: 6.2rem;
+  justify-content: center;
+}
+
+/* Supprimer : même gabarit que Modifier, couleur d'alerte discrète */
+.btn-suppr {
+  color: #b0173f;
+  border-color: #f0b8c8;
+}
+
+.btn-suppr:hover:not(:disabled),
+.btn-suppr:focus-visible {
+  background: #fdecf1;
+  border-color: #b0173f;
+  color: #b0173f;
+}
+
+.liste-types {
+  margin: 0;
+  padding: 0;
 }
 
 .ligne-type {
@@ -623,8 +711,33 @@ td.cellule-actions {
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
-  padding: 0.7rem 0;
+  padding: 0.7rem 0.4rem;
   border-bottom: 1px solid var(--border);
+}
+
+.ligne-type:hover {
+  background: var(--bg-soft);
+}
+
+.libelle-type {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 520px) {
+  .ligne-type {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.6rem;
+  }
+
+  .ligne-type .groupe-actions {
+    justify-content: stretch;
+  }
+
+  .ligne-type .groupe-actions .btn {
+    flex: 1;
+  }
 }
 
 .actions-modale {

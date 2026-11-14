@@ -39,6 +39,12 @@ const LIBELLES = {
   valide: "Validé",
 };
 
+// Choix du filtre : « Tous » puis chaque statut, dans l'ordre de LIBELLES.
+const OPTIONS_STATUT = [
+  { code: "", libelle: "Tous" },
+  ...Object.entries(LIBELLES).map(([code, libelle]) => ({ code, libelle })),
+];
+
 function classeStatut(statut) {
   if (statut === "valide") return "badge-ok";
   if (statut === "soumis") return "badge-info";
@@ -72,6 +78,12 @@ async function charger() {
   } finally {
     chargement.value = false;
   }
+}
+
+function choisirStatut(code) {
+  if (filtreStatut.value === code) return;
+  filtreStatut.value = code;
+  charger();
 }
 
 async function ouvrirModale() {
@@ -134,17 +146,25 @@ onMounted(async () => {
     <main class="container page">
       <div class="barre">
         <div class="filtre">
-          <label for="filtre">Statut</label>
-          <select id="filtre" v-model="filtreStatut" @change="charger">
-            <option value="">Tous</option>
-            <option
-              v-for="(libelle, code) in LIBELLES"
-              :key="code"
-              :value="code"
+          <span id="filtre-libelle" class="filtre-libelle">Statut</span>
+          <div
+            class="segments"
+            role="radiogroup"
+            aria-labelledby="filtre-libelle"
+          >
+            <button
+              v-for="o in OPTIONS_STATUT"
+              :key="o.code"
+              type="button"
+              class="segment"
+              role="radio"
+              :aria-checked="filtreStatut === o.code"
+              :class="{ actif: filtreStatut === o.code }"
+              @click="choisirStatut(o.code)"
             >
-              {{ libelle }}
-            </option>
-          </select>
+              {{ o.libelle }}
+            </button>
+          </div>
         </div>
         <button
           v-if="peutRediger"
@@ -268,17 +288,71 @@ onMounted(async () => {
 
 .filtre {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 0.7rem;
+  min-width: 0;
 }
 
-.filtre label {
-  margin: 0;
+.filtre-libelle {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--muted);
 }
 
-.filtre select {
-  width: auto;
-  min-width: 10rem;
+/* Filtre de statut : sélecteur en pastille, comme les onglets des référentiels */
+.segments {
+  display: inline-flex;
+  gap: 0.25rem;
+  max-width: 100%;
+  padding: 0.3rem;
+  overflow-x: auto;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+
+.segment {
+  flex: none;
+  padding: 0.4rem 1rem;
+  background: transparent;
+  border: none;
+  border-radius: 999px;
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+}
+
+.segment:hover:not(.actif) {
+  color: var(--violet);
+}
+
+.segment:focus-visible {
+  outline: 2px solid var(--violet);
+  outline-offset: 2px;
+}
+
+.segment.actif {
+  background: #fff;
+  color: var(--violet);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+}
+
+@media (max-width: 640px) {
+  .filtre {
+    flex: 1 1 100%;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.4rem;
+  }
+
+  .segments {
+    width: 100%;
+  }
 }
 
 .badge-warn {
