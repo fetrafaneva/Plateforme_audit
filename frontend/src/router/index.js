@@ -5,6 +5,7 @@ import DashboardView from "../views/DashboardView.vue";
 import MissionsView from "../views/MissionsView.vue";
 import MissionDetailView from "../views/MissionDetailView.vue";
 import AuditView from "../views/AuditView.vue";
+import BenchmarkingView from "../views/BenchmarkingView.vue";
 import AdminUtilisateursView from "../views/AdminUtilisateursView.vue";
 import ServiceView from "../views/ServiceView.vue";
 import AdminReferentielsView from "../views/AdminReferentielsView.vue";
@@ -12,6 +13,14 @@ import NotFoundView from "../views/NotFoundView.vue";
 import MonCompteView from "../views/MonCompteView.vue";
 import RapportsView from "../views/RapportsView.vue";
 import RapportDetailView from "../views/RapportDetailView.vue";
+
+// Le responsable hiérarchique voit le benchmarking de son seul périmètre ;
+// le classement nominatif complet reste à l'auditeur et à l'administrateur.
+const ROLES_BENCHMARKING = [
+  "auditeur",
+  "administrateur",
+  "responsable_hierarchique",
+];
 
 const ROLES_RAPPORTS = [
   "chef_mission",
@@ -52,6 +61,12 @@ const routes = [
     name: "audit",
     component: AuditView,
     meta: { requiresAuth: true, roles: ["auditeur", "administrateur"] },
+  },
+  {
+    path: "/benchmarking",
+    name: "benchmarking",
+    component: BenchmarkingView,
+    meta: { requiresAuth: true, roles: ROLES_BENCHMARKING },
   },
   {
     path: "/rapports",

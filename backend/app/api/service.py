@@ -20,6 +20,7 @@ from sqlalchemy import distinct, func
 from sqlalchemy.orm import Session, contains_eager, joinedload
 
 from app.api.deps import get_current_user, require_role
+from app.core.hierarchie import perimetre
 from app.db.base import get_db
 from app.models.analyse import ScoreAnomalie
 from app.models.audit import JournalAcces
@@ -56,28 +57,6 @@ def _rangs(valeurs: list[float]) -> list[int]:
     return [1 + sum(1 for autre in valeurs if autre > v) for v in valeurs]
 
 
-def _perimetre(db: Session, id_racine: int) -> list[ServiceCommune]:
-    """Le service et tous ses descendants."""
-    tous = db.query(ServiceCommune).all()
-    par_id = {s.id_service: s for s in tous}
-    enfants: dict[int, list[int]] = {}
-    for s in tous:
-        if s.id_service_parent is not None:
-            enfants.setdefault(s.id_service_parent, []).append(s.id_service)
-
-    ordre: list[int] = []
-    vus: set[int] = set()
-    pile = [id_racine]
-    while pile:
-        courant = pile.pop()
-        if courant in vus:  # protège d'un éventuel cycle dans la hiérarchie
-            continue
-        vus.add(courant)
-        ordre.append(courant)
-        pile.extend(enfants.get(courant, []))
-    return [par_id[i] for i in ordre]
-
-
 @router.get("/mon-service", response_model=MonServiceOut)
 def mon_service(
     jours: int = Query(30, ge=1, le=365, description="Fenêtre d'analyse en jours"),
@@ -85,8 +64,8 @@ def mon_service(
     db: Session = Depends(get_db),
 ):
     racine = db.get(ServiceCommune, current_user.id_service)
-    perimetre = _perimetre(db, racine.id_service)
-    ids_services = [s.id_service for s in perimetre]
+    services_perimetre = perimetre(db, racine.id_service)
+    ids_services = [s.id_service for s in services_perimetre]
     debut = datetime.now(timezone.utc) - timedelta(days=jours)
 
     utilisateurs = (
@@ -183,7 +162,7 @@ def mon_service(
         membres_par_service.setdefault(u.id_service, []).append(u.id_utilisateur)
 
     lignes = []
-    for s in perimetre:
+    for s in services_perimetre:
         membres = membres_par_service.get(s.id_service, [])
         if not membres:
             continue
