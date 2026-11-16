@@ -22,6 +22,11 @@ const LIENS = [
     ],
   },
   { libelle: "Audit", to: "/audit", roles: ["auditeur", "administrateur"] },
+  {
+    libelle: "Benchmarking",
+    to: "/benchmarking",
+    roles: ["auditeur", "administrateur", "responsable_hierarchique"],
+  },
   { libelle: "Comptes", to: "/admin/utilisateurs", roles: ["administrateur"] },
   {
     libelle: "Référentiels",
