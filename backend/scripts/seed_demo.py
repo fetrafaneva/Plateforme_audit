@@ -17,12 +17,20 @@ Le mot de passe de tous les comptes de démo est : Demo@2026
 """
 import argparse
 import getpass
-import hashlib
 import os
 import random
 import sys
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
+
+# Le journal de démonstration est haché avec LA fonction de l'application, et non
+# avec une formule recopiée ici : l'ordre des champs doit être identique, sinon
+# GET /journal/verify déclare la chaîne corrompue dès la première entrée.
+try:
+    from app.core.chaining import GENESIS_HASH, compute_hash
+except ModuleNotFoundError:  # lancé depuis scripts/ : on ajoute backend/ au chemin
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from app.core.chaining import GENESIS_HASH, compute_hash
 
 # --------------------------------------------------------------------------------------
 # 1) VALEURS À VÉRIFIER AVEC  `python seed_demo.py --inspect`
@@ -38,9 +46,13 @@ S = {
     "journee": {"T": "realisee", "E": "en_cours", "P": "planifiee"},
     "rapport": {"brouillon": "brouillon", "soumis": "soumis", "valide": "valide", "rejete": "rejete"},
     "demande": {"attente": "en_attente", "traitee": "traitee"},
-    "alerte": {"ouverte": "ouverte", "en_cours": "en_cours", "cloturee": "cloturee"},
-    "investigation": {"en_cours": "en_cours", "cloturee": "cloturee"},
-    "gravite": {"moyenne": "moyenne", "haute": "haute", "critique": "critique"},
+    # Vocabulaire aligné sur l'application, sans quoi les données de démonstration
+    # sont invisibles pour elle : schemas/audit.py (StatutAlerte), api/audit.py
+    # (statuts d'investigation, compteurs du résumé) et core/alertes.py (gravités).
+    "alerte": {"nouvelle": "nouvelle", "en_investigation": "en_investigation",
+               "traitee": "traitee", "fausse_alerte": "fausse_alerte"},
+    "investigation": {"ouverte": "ouverte", "cloturee": "cloturee"},
+    "gravite": {"faible": "faible", "moyen": "moyen", "critique": "critique"},
     "service": {"ministere": "ministere", "direction": "direction", "service": "service"},
     "niveau": {"critique": "critique", "eleve": "eleve", "moyen": "moyen", "faible": "faible"},
 }
@@ -228,6 +240,21 @@ RESSOURCES = [  # (libellé, niveau, service propriétaire)
     ("Données électorales", "critique", "DDEC"), ("Journal des accès", "eleve", "RS"),
 ]
 
+# Accès journalisés par jour ouvré et par service. Chaque service a son propre
+# rythme : un tirage uniforme sur les comptes donnerait un volume proportionnel
+# au seul effectif, et les services de deux agents resteraient sous le seuil de
+# classement du benchmarking (MIN_ACCES_CLASSEMENT dans core/benchmarking.py).
+ACTIVITE_PAR_SERVICE = {
+    "RS": (5, 9), "SUP": (5, 9), "DSI": (3, 6), "DDEC": (4, 7),
+    "DRH": (3, 6), "DAF": (4, 7), "SG": (2, 5), "IG": (3, 7),
+}
+ACTIVITE_DEFAUT = (2, 4)
+
+# Mêmes seuils que core/alertes.py : alerte à partir de |z| = 3, « moyen » à
+# partir de 4.5, « critique » à partir de 6.
+SEUIL_GRAVITE_MOYEN = 4.5
+SEUIL_GRAVITE_CRITIQUE = 6.0
+
 
 # --------------------------------------------------------------------------------------
 # 4) Construction des données
@@ -258,8 +285,6 @@ def build(roles, pw_hash):
                              ("SUP", "Service Support et Maintenance", "DSI"),
                              ("SSTAT", "Service Statistique", "DDEC")]:
         svc[key] = st.add("services_communes", nom_service=nom, type=T["service"], id_service_parent=svc[parent])
-    svc_name = {r["id_service"]: r["nom_service"] for r in st.rows["services_communes"]}
-    svc_key = {v: k for k, v in svc.items()}
 
     # ---- Utilisateurs ---------------------------------------------------------------
     spec = [("administrateur", ["DSI", "DSI"]),
@@ -459,105 +484,150 @@ def build(roles, pw_hash):
                                  volume_moyen=round(rng.uniform(6, 30), 1), horaires_habituels=hrs,
                                  perimetre_habituel=perim[:255], date_calcul=NOW - timedelta(days=3))
 
-    # Journal : accès normaux sur 90 jours
+    agents_par_service = defaultdict(list)
+    for u in U["_all"]:
+        agents_par_service[u["service"]].append(u)
+
+    def acteur(role, skey):
+        """Un compte de ce rôle dans ce service, pour situer un scénario d'anomalie."""
+        return next(u for u in U[role] if u["service"] == skey)
+
+    # Journal : accès normaux sur 90 jours, service par service
     raw = []  # (ts, uid, rid, action, z, tag)
     for k in range(90, -1, -1):
         d = TODAY - timedelta(days=k)
         if d.weekday() >= 5:
             continue
-        for _ in range(rng.randint(10, 17)):
-            u = rng.choice(U["_all"])
-            ts = at(d, rng.randint(8, 16), rng.randint(0, 59)) + timedelta(seconds=rng.randint(0, 59))
-            if ts > NOW:
-                continue
-            act = rng.choices(["consultation", "modification", "export", "creation"], [70, 18, 6, 6])[0]
-            z = max(-2.4, min(2.4, round(rng.gauss(0, 0.9), 2)))
-            raw.append((ts, u["id"], rng.choice(normal_res[u["id"]]), act, z, None))
+        for skey, agents in agents_par_service.items():
+            bas, haut = ACTIVITE_PAR_SERVICE.get(skey, ACTIVITE_DEFAUT)
+            for _ in range(rng.randint(bas, haut)):
+                u = rng.choice(agents)
+                ts = at(d, rng.randint(8, 16), rng.randint(0, 59)) + timedelta(seconds=rng.randint(0, 59))
+                if ts > NOW:
+                    continue
+                act = rng.choices(["consultation", "modification", "export", "creation"], [70, 18, 6, 6])[0]
+                z = max(-2.4, min(2.4, round(rng.gauss(0, 0.9), 2)))
+                raw.append((ts, u["id"], rng.choice(normal_res[u["id"]]), act, z, None))
 
-    # Scénarios d'anomalies pour la démonstration
-    tech_a, agent_b, resp_c = U["technicien"][2], U["agent"][3], U["responsable_hierarchique"][1]
-    for k, dd in enumerate([12, 10, 9, 6, 4, 2]):  # A : exports de nuit sur les fichiers de paie
+    # Scénarios d'anomalies, répartis sur six services et sur les trois derniers
+    # mois : sans cette répartition, la médiane du taux d'alertes d'un type de
+    # service reste à zéro et le benchmarking n'a rien à comparer.
+    tech_a = acteur("technicien", "SUP")
+    agent_b = acteur("agent", "DRH")
+    resp_c = acteur("responsable_hierarchique", "DAF")
+    audit_d = acteur("auditeur", "IG")
+    agent_e = acteur("agent", "DDEC")
+    tech_f = acteur("technicien", "RS")
+
+    # A (SUP, mois en cours) : exports de nuit sur les fichiers de paie
+    for k, dd in enumerate([12, 10, 9, 6, 4, 2]):
         ts = at(TODAY - timedelta(days=dd), 2, rng.randint(0, 50))
-        raw.append((ts, tech_a["id"], R("Fichiers de paie"), "export", round(rng.uniform(4.1, 5.8), 2), "A"))
-    for dd in [21, 20, 20, 19]:  # B : agent RH qui consulte des données électorales
+        z = round(rng.uniform(6.2, 7.2), 2) if k < 2 else round(rng.uniform(4.6, 5.9), 2)
+        raw.append((ts, tech_a["id"], R("Fichiers de paie"), "export", z, "A"))
+    # B (DRH, mois précédent) : agent RH qui consulte des données électorales
+    for dd in [21, 20, 20, 19]:
         ts = at(TODAY - timedelta(days=dd), rng.randint(10, 15), rng.randint(0, 59))
-        raw.append((ts, agent_b["id"], R("Données électorales"), "consultation", round(rng.uniform(3.1, 3.7), 2), "B"))
-    for k in range(25):  # C : rafale d'exports de la base RH
+        raw.append((ts, agent_b["id"], R("Données électorales"), "consultation",
+                    round(rng.uniform(3.1, 3.7), 2), "B"))
+    # C (DAF, mois en cours) : rafale d'exports de la base RH
+    for k in range(25):
         ts = at(TODAY - timedelta(days=3), 13, 0) + timedelta(seconds=50 * k)
         raw.append((ts, resp_c["id"], R("Base de données des agents (RH)"), "export",
-                    round(rng.uniform(3.4, 4.6), 2) if k >= 22 else round(rng.uniform(1.2, 2.3), 2), "C"))
+                    round(rng.uniform(4.6, 5.4), 2) if k >= 22 else round(rng.uniform(1.2, 2.3), 2), "C"))
+    # D (IG, mois précédent) : auditeur qui exporte le journal des accès la nuit
+    for dd in [40, 38, 36]:
+        ts = at(TODAY - timedelta(days=dd), 1, rng.randint(0, 50))
+        raw.append((ts, audit_d["id"], R("Journal des accès"), "export",
+                    round(rng.uniform(5.0, 6.8), 2), "D"))
+    # E (DDEC, il y a deux mois) : agent qui consulte des fichiers de paie
+    for dd in [55, 54]:
+        ts = at(TODAY - timedelta(days=dd), rng.randint(9, 16), rng.randint(0, 59))
+        raw.append((ts, agent_e["id"], R("Fichiers de paie"), "consultation",
+                    round(rng.uniform(3.2, 3.9), 2), "E"))
+    # F (RS, mois en cours) : technicien qui accède au serveur de sauvegarde
+    for k in range(12):
+        ts = at(TODAY - timedelta(days=8), 21, 0) + timedelta(minutes=4 * k)
+        raw.append((ts, tech_f["id"], R("Serveur de sauvegarde"), "export",
+                    round(rng.uniform(3.6, 4.9), 2) if k >= 9 else round(rng.uniform(1.4, 2.4), 2), "F"))
     raw.sort(key=lambda r: r[0])
 
-    prev_hash = "0" * 64
+    # Adresses extérieures pour les scénarios qui le justifient (export de nuit
+    # depuis un poste inconnu) ; sinon l'adresse habituelle de l'agent.
+    IP_SCENARIO = {"A": "41.204.17.9", "D": "41.188.22.4", "F": "10.20.99.7"}
+
+    prev_hash = GENESIS_HASH
     scen = defaultdict(list)
-    scored = []  # (ts, uid, z)
     for ts, uid, rid, act, z, tag in raw:
-        ip = "41.204.17.9" if tag == "A" else users_by_id[uid]["ip"]
-        h = hashlib.sha256(f"{prev_hash}|{uid}|{rid}|{act}|{ts.isoformat()}|{ip}".encode()).hexdigest()
+        ip = IP_SCENARIO.get(tag) or users_by_id[uid]["ip"]
+        h = compute_hash(id_utilisateur=uid, id_ressource=rid, type_action=act,
+                         horodatage=ts, hash_precedent=prev_hash)
         eid = st.add("journal_acces", id_utilisateur=uid, id_ressource=rid, type_action=act, horodatage=ts,
                      adresse_ip=ip, hash_entree=h, hash_precedent=prev_hash)
         prev_hash = h
         sid = st.add("scores_anomalie", id_entree_journal=eid, id_profil_reference=profil[uid], z_score=z,
                      methode_utilisee="z-score", date_calcul=ts + timedelta(minutes=5))
-        scored.append((ts, uid, z))
         if tag:
             scen[tag].append((z, sid, ts))
 
     def gravite(z):
-        return S["gravite"]["critique" if z >= 5 else "haute" if z >= 4 else "moyenne"]
+        """Mêmes seuils que core.alertes.evaluer_alerte."""
+        if z >= SEUIL_GRAVITE_CRITIQUE:
+            return S["gravite"]["critique"]
+        if z >= SEUIL_GRAVITE_MOYEN:
+            return S["gravite"]["moyen"]
+        return S["gravite"]["faible"]
 
-    for tag, polkey, count in [("A", "horaires", 3), ("B", "perimetre", 1), ("C", "volume", 2)]:
+    # Par scénario : politique déclenchée, nombre d'alertes retenues (les plus
+    # fortes) et suite donnée à la plus forte d'entre elles. Les deux issues d'une
+    # investigation close sont « fausse_alerte » (exclue du benchmarking, car une
+    # alerte infirmée n'est pas du risque) et « traitee » (anomalie confirmée).
+    scenarios_alertes = [
+        ("A", "horaires", 3, "en_investigation"),
+        ("B", "perimetre", 1, "fausse_alerte"),
+        ("C", "volume", 2, "nouvelle"),
+        ("D", "horaires", 2, "en_investigation"),
+        ("E", "perimetre", 1, "traitee"),
+        ("F", "perimetre", 2, "nouvelle"),
+    ]
+    conclusions = {
+        "B": "Faux positif : agent détaché temporairement auprès de la Direction de la "
+             "Décentralisation pour l'inventaire des données.",
+        "E": "Accès hors périmètre confirmé : l'agent consultait des fichiers de paie "
+             "sans rapport avec ses attributions. Droit d'accès retiré sur la ressource.",
+    }
+    auditeurs = U["auditeur"]
+    for num, (tag, polkey, count, suite) in enumerate(scenarios_alertes):
         top = sorted(scen[tag], reverse=True)[:count]
         for rank, (z, sid, ts) in enumerate(top):
             created = ts + timedelta(minutes=10)
-            if tag == "B":
-                statut = S["alerte"]["cloturee"]
-            elif tag == "A" and rank == 0:
-                statut = S["alerte"]["en_cours"]
-            else:
-                statut = S["alerte"]["ouverte"]
-            aid = st.add("alertes_securite", id_score=sid, id_politique=pol[polkey], niveau_gravite=gravite(z),
-                         statut=statut, date_creation=created)
-            auditeurs = U["auditeur"]
-            if tag == "A" and rank == 0:
-                st.add("investigations", id_alerte=aid, id_enqueteur=auditeurs[0]["id"],
-                       statut=S["investigation"]["en_cours"], conclusion=None,
+            # Seule l'alerte la plus forte du scénario reçoit la suite prévue :
+            # les autres restent à traiter.
+            statut = S["alerte"][suite] if rank == 0 else S["alerte"]["nouvelle"]
+            aid = st.add("alertes_securite", id_score=sid, id_politique=pol[polkey],
+                         niveau_gravite=gravite(z), statut=statut, date_creation=created)
+            if rank != 0:
+                continue
+            enqueteur = auditeurs[num % len(auditeurs)]["id"]
+            if statut == S["alerte"]["en_investigation"]:
+                st.add("investigations", id_alerte=aid, id_enqueteur=enqueteur,
+                       statut=S["investigation"]["ouverte"], conclusion=None,
                        date_ouverture=min(NOW, created + timedelta(days=1)), date_cloture=None)
-            if tag == "B":
-                st.add("investigations", id_alerte=aid, id_enqueteur=auditeurs[1]["id"],
-                       statut=S["investigation"]["cloturee"],
-                       conclusion="Faux positif : agent détaché temporairement auprès de la Direction de la "
-                                  "Décentralisation pour l'inventaire des données.",
-                       date_ouverture=created + timedelta(days=1), date_cloture=created + timedelta(days=4))
+            elif tag in conclusions:
+                st.add("investigations", id_alerte=aid, id_enqueteur=enqueteur,
+                       statut=S["investigation"]["cloturee"], conclusion=conclusions[tag],
+                       date_ouverture=created + timedelta(days=1),
+                       date_cloture=created + timedelta(days=4))
     for a in U["auditeur"][:2]:
         st.add("notifications", id_utilisateur=a["id"], type_notification="alerte_securite",
                message="Nouvelles alertes de sécurité à examiner.", lien=None, lue=False,
                date_creation=NOW - timedelta(days=2))
 
-    # Benchmarking par service et rapports d'audit (calculés à partir du journal)
-    agg = defaultdict(list)  # (période, service) -> [|z|]
-    cnt_users = defaultdict(set)
-    for ts, uid, z in scored:
-        key = (month_label(ts), users_by_id[uid]["service"])
-        agg[key].append(abs(z))
-        cnt_users[key].add(uid)
-    periods = sorted({p for p, _ in agg})[-3:]
-    for p in periods:
-        items = sorted(((sum(v) / len(v), s) for (pp, s), v in agg.items() if pp == p), reverse=True)
-        for rank, (score, s) in enumerate(items, start=1):
-            st.add("benchmarking_services", id_service=svc[s], periode=p, score_risque_moyen=round(score, 3),
-                   rang=rank, date_calcul=NOW - timedelta(days=1))
-    alert_count = len(st.rows["alertes_securite"])
-    for (p, s), vals in sorted(agg.items()):
-        if p != prev_month:
-            continue
-        contenu = (f"Rapport d'audit comportemental – {svc_name[svc[s]]} – période {p}.\n"
-                   f"{len(vals)} accès journalisés pour {len(cnt_users[(p, s)])} utilisateur(s). "
-                   f"Score de risque moyen : {sum(vals) / len(vals):.2f}. "
-                   f"Aucun écart majeur de conformité n'a été relevé sur la période, hormis les alertes "
-                   f"traitées par l'Inspection Générale ({alert_count} alerte(s) au total sur la base).")
-        st.add("rapports_audit", id_service=svc[s], periode_couverte=p, contenu=contenu,
-               date_generation=at(TODAY.replace(day=1), 8))
+    # Le benchmarking par service et les synthèses d'audit ne sont PAS fabriqués
+    # ici : ils sont calculés par app/core/benchmarking.py à partir du journal et
+    # des alertes de la période. Un jeu de démonstration qui pré-remplirait le
+    # résultat du calcul masquerait justement ce que le calcul doit démontrer.
+    # Après ce seed : clôturer une période depuis la page Benchmarking, ou
+    # POST /benchmarking/calculer?periode=AAAA-MM.
     return st, U
 
 
@@ -751,6 +821,9 @@ def main():
     print("Comptes faciles à retenir :")
     for role, (_, _, local) in DEMO_LOGINS.items():
         print(f"  {role:<26}{local}@mid.gov.mg")
+    print("\nLe benchmarking n'est pas pré-rempli : il se calcule depuis le journal.")
+    print("Connecte-toi en auditeur ou en administrateur, page Benchmarking, puis")
+    print("clôture les trois derniers mois (ou POST /benchmarking/calculer?periode=AAAA-MM).")
 
 
 if __name__ == "__main__":
